@@ -1,0 +1,16 @@
+{
+    "python.analysis.typeCheckingMode": "basic",
+    "pylint.args": [
+        "--disable=missing-module-docstring",
+        "--disable=missing-class-docstring",
+        "--disable=missing-function-docstring",
+    ],
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    "python.analysis.autoImportCompletions": true
+}

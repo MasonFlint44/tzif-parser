@@ -1,0 +1,18 @@
+{
+	"name": "tzif-parser",
+	"image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-python.pylint",
+				"ms-python.black-formatter",
+				"ms-python.isort",
+				"github.copilot",
+				"github.copilot-chat",
+				"ms-azuretools.vscode-docker"
+			]
+		}
+	},
+	"postCreateCommand": "pip install -r requirements.txt"
+}
