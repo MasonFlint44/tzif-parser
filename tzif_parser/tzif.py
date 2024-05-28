@@ -1,26 +1,37 @@
 import os.path
 import struct
-from typing import IO, Any
+from typing import IO
+
+from .models import TimeZoneInfoBody, TimeZoneInfoHeader
+from .posix import PosixTzInfo
 
 
-class TZifParser:
+class TimeZoneInfo:
     def __init__(self, tzname: str, zoneinfo_dir="/usr/share/zoneinfo"):
         self._tzname = tzname
         self._zoneinfo_dir = zoneinfo_dir
+        self._header_data = None
+        self._body_data = None
+        self._v2_header_data = None
+        self._v2_body_data = None
+        self._v2_posix_string = None
 
-    def parse(self):
+    def read(self):
         filepath = self._get_zoneinfo_filepath()
         with open(filepath, "rb") as file:
-            header_data = self._read_header(file)
-            body_data = self._parse_body(file, header_data)
-            if header_data["version"] >= 2:
-                v2_header_data = self._read_header(file)
-                v2_body_data = self._parse_body(
-                    file, v2_header_data, header_data["version"]
+            self._header_data = self._read_header(file)
+            self._body_data = self._read_body(file, self._header_data)
+            if self._header_data.version >= 2:
+                self._v2_header_data = self._read_header(file)
+                self._v2_body_data = self._read_body(
+                    file, self._v2_header_data, self._v2_header_data.version
                 )
-            pass
+                # TODO: handle posix-style tz string
+                self._v2_posix_string = PosixTzInfo(file).read()
 
-    def _read_header(self, file: IO[bytes]) -> dict[str, Any]:
+        return self
+
+    def _read_header(self, file: IO[bytes]) -> TimeZoneInfoHeader:
         format_ = ">4s1c15x6I"  # Big endian, 4 bytes, 1 byte, skip 15 bytes, 6 unsigned integers
         header_size = struct.calcsize(format_)
         header_data = struct.unpack(format_, file.read(header_size))
@@ -38,57 +49,53 @@ class TZifParser:
         if magic != b"TZif":
             raise ValueError("Invalid TZif file: Magic sequence not found.")
 
-        return {
-            "version": int(version) if version != b"\x00" else 1,
-            "tzh_ttisutcnt": tzh_ttisutcnt,
-            "tzh_ttisstdcnt": tzh_ttisstdcnt,
-            "tzh_leapcnt": tzh_leapcnt,
-            "tzh_timecnt": tzh_timecnt,
-            "tzh_typecnt": tzh_typecnt,
-            "tzh_charcnt": tzh_charcnt,
-        }
+        return TimeZoneInfoHeader(
+            int(version) if version != b"\x00" else 1,
+            tzh_ttisutcnt,
+            tzh_ttisstdcnt,
+            tzh_leapcnt,
+            tzh_timecnt,
+            tzh_typecnt,
+            tzh_charcnt,
+        )
 
     def _get_zoneinfo_filepath(self) -> str:
         tzname_parts = self._tzname.partition("/")
         return os.path.join(self._zoneinfo_dir, tzname_parts[0], tzname_parts[2])
 
-    def _parse_body(self, file: IO[bytes], header_data, version=1) -> dict[str, Any]:
+    def _read_body(
+        self, file: IO[bytes], header_data: TimeZoneInfoHeader, version=1
+    ) -> TimeZoneInfoBody:
         # Parse transition times
         transition_times = self._read_transition_times(
-            file, header_data["tzh_timecnt"], version
+            file, header_data.tzh_timecnt, version
         )
 
         # Parse local time type indices
-        time_type_indices = self._read_time_type_indices(
-            file, header_data["tzh_timecnt"]
-        )
+        time_type_indices = self._read_time_type_indices(file, header_data.tzh_timecnt)
 
         # Parse ttinfo structures
-        ttinfo_structures = self._read_ttinfo_structures(
-            file, header_data["tzh_typecnt"]
-        )
+        ttinfo_structures = self._read_ttinfo_structures(file, header_data.tzh_typecnt)
 
         # Parse time zone designation strings
-        tz_designations = self._read_tz_designations(file, header_data["tzh_charcnt"])
+        tz_designations = self._read_tz_designations(file, header_data.tzh_charcnt)
 
         # Parse leap second data
-        leap_seconds = self._read_leap_seconds(
-            file, header_data["tzh_leapcnt"], version
-        )
+        leap_seconds = self._read_leap_seconds(file, header_data.tzh_leapcnt, version)
 
         # Parse standard/wall and UT/local indicators
-        std_wall_indicators = self._read_indicators(file, header_data["tzh_ttisstdcnt"])
-        ut_local_indicators = self._read_indicators(file, header_data["tzh_ttisutcnt"])
+        std_wall_indicators = self._read_indicators(file, header_data.tzh_ttisstdcnt)
+        ut_local_indicators = self._read_indicators(file, header_data.tzh_ttisutcnt)
 
-        return {
-            "transition_times": transition_times,
-            "time_type_indices": time_type_indices,
-            "ttinfo_structures": ttinfo_structures,
-            "tz_designations": tz_designations,
-            "leap_seconds": leap_seconds,
-            "std_wall_indicators": std_wall_indicators,
-            "ut_local_indicators": ut_local_indicators,
-        }
+        return TimeZoneInfoBody(
+            transition_times,
+            time_type_indices,
+            ttinfo_structures,
+            tz_designations,
+            leap_seconds,
+            std_wall_indicators,
+            ut_local_indicators,
+        )
 
     def _read_transition_times(
         self, file: IO[bytes], timecnt: int, version: int
@@ -125,8 +132,3 @@ class TZifParser:
 
     def _read_indicators(self, file: IO[bytes], count: int) -> list[int]:
         return list(file.read(count))
-
-
-if __name__ == "__main__":
-    parser = TZifParser("America/New_York")
-    parser.parse()

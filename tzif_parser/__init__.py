@@ -1,1 +1,1 @@
-from .parser import TZifParser
+from .tzif import TimeZoneInfo
