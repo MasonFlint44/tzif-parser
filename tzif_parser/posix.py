@@ -1,9 +1,9 @@
 import re
 from calendar import Calendar
-from datetime import datetime, time
+from dataclasses import dataclass
+from datetime import datetime
+from datetime import time as dt_time
 from typing import IO
-
-from .models import PosixTzDateTime
 
 posix_weekdays_to_python = {
     0: 6,
@@ -16,98 +16,91 @@ posix_weekdays_to_python = {
 }
 
 
-class PosixTzInfo:
-    def __init__(self, file: IO[bytes]):
+@dataclass
+class PosixTzDateTime:
+    month: int
+    week: int
+    weekday: int
+    time: dt_time
+
+    def __init__(self, month: int, week: int, weekday: int, time: dt_time):
         self._calendar = Calendar()
-        self._file = file
-        self._local_tz = None
-        self._dst_start = None
-        self._dst_end = None
+        self.month = month
+        self.week = week
+        self.weekday = weekday
+        self.time = time
 
-    @property
-    def local_tz(self):
-        return self._local_tz
-
-    @property
-    def dst_start(self):
-        return self._dst_start
-
-    @property
-    def dst_end(self):
-        return self._dst_end
-
-    def get_dst_start(self, year: int) -> datetime:
-        if not self._dst_start:
-            raise ValueError("DST start not set")
-        return self._get_date_time(year, self._dst_start)
-
-    def get_dst_end(self, year: int) -> datetime:
-        if not self._dst_end:
-            raise ValueError("DST end not set")
-        return self._get_date_time(year, self._dst_end)
-
-    def _get_date_time(self, year: int, posix_datetime: PosixTzDateTime) -> datetime:
-        if posix_datetime.week == 5:
-            days = [
-                day
-                for day in self._calendar.itermonthdays2(2044, posix_datetime.month)
-                if day[0] != 0
-            ]
-            # Find the last day of the month that matches the weekday
-            day = next(
-                day
-                for day in reversed(days)
-                if day[1] == posix_weekdays_to_python[posix_datetime.weekday]
-            )
-            return datetime(
-                year,
-                posix_datetime.month,
-                day[0],
-                posix_datetime.time.hour,
-                posix_datetime.time.minute,
-                posix_datetime.time.second,
-            )
-        # TODO: what if the first thursday isn't in the first week of the month?
-        # TODO: what if second thursday isn't in the second week of the month?
-        weeks = self._calendar.monthdays2calendar(year, posix_datetime.month)
-        week = weeks[posix_datetime.week - 1]
+    def to_datetime(self, year: int) -> datetime:
+        weeks = self._calendar.monthdays2calendar(year, self.month)
+        week = weeks[self.week - 1 if self.week < 5 else -1]
         day = next(
-            day
-            for day in week
-            if day[1] == posix_weekdays_to_python[posix_datetime.weekday]
+            day for day in week if day[1] == posix_weekdays_to_python[self.weekday]
         )
         return datetime(
             year,
-            posix_datetime.month,
+            self.month,
             day[0],
-            posix_datetime.time.hour,
-            posix_datetime.time.minute,
-            posix_datetime.time.second,
+            self.time.hour,
+            self.time.minute,
+            self.time.second,
         )
 
-    def read(self) -> "PosixTzInfo":
-        _ = self._file.readline()
-        posix_string = self._file.readline().rstrip()
+
+@dataclass
+class PosixTzInfo:
+    std_abbrev: str
+    utc_offset: int
+    dst_abbrev: str
+    dst_start: PosixTzDateTime
+    dst_end: PosixTzDateTime
+
+    def __init__(
+        self,
+        std_abbrev: str,
+        utc_offset: int,
+        dst_abbrev: str,
+        dst_start: PosixTzDateTime,
+        dst_end: PosixTzDateTime,
+    ):
+        self._calendar = Calendar()
+        self.std_abbrev: str = std_abbrev
+        self.utc_offset: int = utc_offset
+        self.dst_abbrev: str = dst_abbrev
+        self.dst_start: PosixTzDateTime = dst_start
+        self.dst_end: PosixTzDateTime = dst_end
+
+    @classmethod
+    def read(cls, file: IO[bytes]) -> "PosixTzInfo":
+        _ = file.readline()
+        posix_string = file.readline().rstrip()
         local_tz, dst_start, dst_end = posix_string.split(b",")
-        self._std_abbrev, self._utc_offset, self._dst_abbrev = re.split(
-            b"(-?[0-9]+)", local_tz
+        std_abbrev, utc_offset, dst_abbrev = re.split(b"(-?[0-9]+)", local_tz)
+        std_abbrev = std_abbrev.decode("utf-8")
+        dst_abbrev = dst_abbrev.decode("utf-8")
+        utc_offset = int(utc_offset.decode("utf-8"))
+        dst_start = cls._read_datetime(dst_start)
+        dst_end = cls._read_datetime(dst_end)
+
+        return cls(
+            std_abbrev,
+            utc_offset,
+            dst_abbrev,
+            dst_start,
+            dst_end,
         )
-        self._dst_start = self._read_datetime(dst_start)
-        self._dst_end = self._read_datetime(dst_end)
 
-        return self
-
-    # TODO: what should the default time be?
-    def _read_datetime(self, posix_datetime: bytes) -> PosixTzDateTime:
+    @classmethod
+    def _read_datetime(cls, posix_datetime: bytes) -> PosixTzDateTime:
         date_part, time_part = (
             posix_datetime.split(b"/")
             if b"/" in posix_datetime
-            else (posix_datetime, b"00:00:00")
+            else (posix_datetime, b"02:00:00")
         )
-        month, week, weekday = self._read_date(date_part)
+        month, week, weekday = cls._read_date(date_part)
         hour, minute, second = map(int, time_part.split(b":"))
-        return PosixTzDateTime(month, week, weekday, time(hour, minute, second))
+        return PosixTzDateTime(month, week, weekday, dt_time(hour, minute, second))
 
-    def _read_date(self, posix_date: bytes) -> tuple[int, int, int]:
+    @staticmethod
+    def _read_date(posix_date: bytes) -> tuple[int, int, int]:
         month, week, weekday = posix_date.split(b".")
         return int(month[1:]), int(week), int(weekday)
