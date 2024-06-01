@@ -14,6 +14,7 @@ posix_weekdays_to_python = {
     5: 4,
     6: 5,
 }
+_calendar = Calendar()
 
 
 @dataclass
@@ -23,15 +24,8 @@ class PosixTzDateTime:
     weekday: int
     time: dt_time
 
-    def __init__(self, month: int, week: int, weekday: int, time: dt_time):
-        self._calendar = Calendar()
-        self.month = month
-        self.week = week
-        self.weekday = weekday
-        self.time = time
-
     def to_datetime(self, year: int) -> datetime:
-        weeks = self._calendar.monthdays2calendar(year, self.month)
+        weeks = _calendar.monthdays2calendar(year, self.month)
         week = weeks[self.week - 1 if self.week < 5 else -1]
         day = next(
             day for day in week if day[1] == posix_weekdays_to_python[self.weekday]
@@ -46,44 +40,33 @@ class PosixTzDateTime:
         )
 
 
+# TODO: handle version 3 - hours is -167 through 167
+# TODO: handle version 3 - make dst all year if it starts jan 1 at 00:00 and ends dec 31 at 24:00 plus difference between dst and std
 @dataclass
 class PosixTzInfo:
-    std_abbrev: str
-    utc_offset: int
+    standard_abbrev: str
+    utc_offset_hours: int
     dst_abbrev: str
     dst_start: PosixTzDateTime
     dst_end: PosixTzDateTime
-
-    def __init__(
-        self,
-        std_abbrev: str,
-        utc_offset: int,
-        dst_abbrev: str,
-        dst_start: PosixTzDateTime,
-        dst_end: PosixTzDateTime,
-    ):
-        self._calendar = Calendar()
-        self.std_abbrev: str = std_abbrev
-        self.utc_offset: int = utc_offset
-        self.dst_abbrev: str = dst_abbrev
-        self.dst_start: PosixTzDateTime = dst_start
-        self.dst_end: PosixTzDateTime = dst_end
 
     @classmethod
     def read(cls, file: IO[bytes]) -> "PosixTzInfo":
         _ = file.readline()
         posix_string = file.readline().rstrip()
         local_tz, dst_start, dst_end = posix_string.split(b",")
-        std_abbrev, utc_offset, dst_abbrev = re.split(b"(-?[0-9]+)", local_tz)
-        std_abbrev = std_abbrev.decode("utf-8")
+        standard_abbrev, utc_offset_hours, dst_abbrev = re.split(
+            b"(-?[0-9]+)", local_tz
+        )
+        standard_abbrev = standard_abbrev.decode("utf-8")
         dst_abbrev = dst_abbrev.decode("utf-8")
-        utc_offset = int(utc_offset.decode("utf-8"))
+        utc_offset_hours = int(utc_offset_hours.decode("utf-8"))
         dst_start = cls._read_datetime(dst_start)
         dst_end = cls._read_datetime(dst_end)
 
         return cls(
-            std_abbrev,
-            utc_offset,
+            standard_abbrev,
+            utc_offset_hours,
             dst_abbrev,
             dst_start,
             dst_end,
