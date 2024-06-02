@@ -6,33 +6,65 @@ from .tzif_body import TimeZoneInfoBody
 from .tzif_header import TimeZoneInfoHeader
 
 
+# TODO: is there an environment variable that can be used to determine the zoneinfo directory?
 @dataclass
 class TimeZoneInfo:
     timezone_name: str
-    zoneinfo_dir: str = "/usr/share/zoneinfo"
-    header_data: TimeZoneInfoHeader | None = None
-    body_data: TimeZoneInfoBody | None = None
-    v2_header_data: TimeZoneInfoHeader | None = None
-    v2_body_data: TimeZoneInfoBody | None = None
-    v2_posix_string: PosixTzInfo | None = None
+    zoneinfo_dir: str
+    posix_string: PosixTzInfo | None
+    _header_data: TimeZoneInfoHeader | None
+    _body_data: TimeZoneInfoBody | None
+    _v2_header_data: TimeZoneInfoHeader | None = None
+    _v2_body_data: TimeZoneInfoBody | None = None
 
-    def read(self):
-        filepath = self._get_zoneinfo_filepath()
+    @property
+    def header(self) -> TimeZoneInfoHeader:
+        if self._header_data is None:
+            raise ValueError("No header data available")
+        if self._header_data.version < 2:
+            return self._header_data
+        if self._v2_header_data is None:
+            raise ValueError("No header data available")
+        return self._v2_header_data
+
+    @property
+    def body(self) -> TimeZoneInfoBody:
+        if self._body_data is None:
+            raise ValueError("No body data available")
+        if self.header.version < 2:
+            return self._body_data
+        if self._v2_body_data is None:
+            raise ValueError("No body data available")
+        return self._v2_body_data
+
+    @classmethod
+    def read(cls, timezone_name: str, zoneinfo_dir: str = "/usr/share/zoneinfo"):
+        filepath = cls.get_zoneinfo_filepath(timezone_name, zoneinfo_dir)
         with open(filepath, "rb") as file:
-            self.header_data = TimeZoneInfoHeader.read(file)
-            self.body_data = TimeZoneInfoBody.read(file, self.header_data)
+            header_data = TimeZoneInfoHeader.read(file)
+            body_data = TimeZoneInfoBody.read(file, header_data)
+            if header_data.version < 2:
+                return cls(timezone_name, zoneinfo_dir, None, header_data, body_data)
 
-            if self.header_data.version >= 2:
-                self.v2_header_data = TimeZoneInfoHeader.read(file)
-                self.v2_body_data = TimeZoneInfoBody.read(
-                    file, self.v2_header_data, self.v2_header_data.version
-                )
-                self.v2_posix_string = PosixTzInfo.read(file)
+            v2_header_data = TimeZoneInfoHeader.read(file)
+            v2_body_data = TimeZoneInfoBody.read(
+                file, v2_header_data, v2_header_data.version
+            )
+            v2_posix_string = PosixTzInfo.read(file)
 
-        return self
+            return cls(
+                timezone_name,
+                zoneinfo_dir,
+                v2_posix_string,
+                header_data,
+                body_data,
+                v2_header_data,
+                v2_body_data,
+            )
 
-    def _get_zoneinfo_filepath(self) -> str:
-        timezone_name_parts = self.timezone_name.partition("/")
+    @classmethod
+    def get_zoneinfo_filepath(cls, timezone_name: str, zoneinfo_dir: str) -> str:
+        timezone_name_parts = timezone_name.partition("/")
         return os.path.join(
-            self.zoneinfo_dir, timezone_name_parts[0], timezone_name_parts[2]
+            zoneinfo_dir, timezone_name_parts[0], timezone_name_parts[2]
         )

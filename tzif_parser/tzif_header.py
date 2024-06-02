@@ -7,7 +7,7 @@ from typing import IO
 class TimeZoneInfoHeader:
     version: int
     is_utc_flag_count: int
-    is_standard_flag_count: int
+    wall_standard_flag_count: int
     leap_second_count: int
     transition_time_count: int
     local_time_type_count: int

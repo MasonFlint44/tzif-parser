@@ -2,7 +2,7 @@ import re
 from calendar import Calendar
 from dataclasses import dataclass
 from datetime import datetime
-from datetime import time as dt_time
+from datetime import time as time_
 from typing import IO
 
 posix_weekdays_to_python = {
@@ -22,7 +22,7 @@ class PosixTzDateTime:
     month: int
     week: int
     weekday: int
-    time: dt_time
+    time: time_
 
     def to_datetime(self, year: int) -> datetime:
         weeks = _calendar.monthdays2calendar(year, self.month)
@@ -46,20 +46,24 @@ class PosixTzDateTime:
 class PosixTzInfo:
     standard_abbrev: str
     utc_offset_hours: int
-    dst_abbrev: str
-    dst_start: PosixTzDateTime
-    dst_end: PosixTzDateTime
+    dst_abbrev: str | None
+    dst_start: PosixTzDateTime | None
+    dst_end: PosixTzDateTime | None
 
     @classmethod
     def read(cls, file: IO[bytes]) -> "PosixTzInfo":
         _ = file.readline()
         posix_string = file.readline().rstrip()
-        local_tz, dst_start, dst_end = posix_string.split(b",")
+        local_tz, dst_start, dst_end = (
+            posix_string.split(b",")
+            if b"," in posix_string
+            else (posix_string, b"", b"")
+        )
         standard_abbrev, utc_offset_hours, dst_abbrev = re.split(
             b"(-?[0-9]+)", local_tz
         )
         standard_abbrev = standard_abbrev.decode("utf-8")
-        dst_abbrev = dst_abbrev.decode("utf-8")
+        dst_abbrev = dst_abbrev.decode("utf-8") if len(dst_abbrev) > 0 else None
         utc_offset_hours = int(utc_offset_hours.decode("utf-8"))
         dst_start = cls._read_datetime(dst_start)
         dst_end = cls._read_datetime(dst_end)
@@ -73,7 +77,9 @@ class PosixTzInfo:
         )
 
     @classmethod
-    def _read_datetime(cls, posix_datetime: bytes) -> PosixTzDateTime:
+    def _read_datetime(cls, posix_datetime: bytes) -> PosixTzDateTime | None:
+        if len(posix_datetime) == 0:
+            return None
         date_part, time_part = (
             posix_datetime.split(b"/")
             if b"/" in posix_datetime
@@ -81,7 +87,7 @@ class PosixTzInfo:
         )
         month, week, weekday = cls._read_date(date_part)
         hour, minute, second = map(int, time_part.split(b":"))
-        return PosixTzDateTime(month, week, weekday, dt_time(hour, minute, second))
+        return PosixTzDateTime(month, week, weekday, time_(hour, minute, second))
 
     @staticmethod
     def _read_date(posix_date: bytes) -> tuple[int, int, int]:
