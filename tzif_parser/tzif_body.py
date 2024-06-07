@@ -27,12 +27,12 @@ class TimeZoneInfoBody:
     ) -> "TimeZoneInfoBody":
         # Parse transition times
         dst_transitions = cls._read_transition_times(
-            file, header_data.transition_time_count, version
+            file, header_data.dst_transitions_count, version
         )
 
         # Parse local time type indices
         time_type_indices = cls._read_time_type_indices(
-            file, header_data.transition_time_count
+            file, header_data.dst_transitions_count
         )
 
         # Parse ttinfo structures
@@ -41,7 +41,7 @@ class TimeZoneInfoBody:
         )
 
         for transition, time_type_index in zip(dst_transitions, time_type_indices):
-            transition.time_type_info = time_type_info[time_type_index]
+            transition._time_type_info = time_type_info[time_type_index]
 
         # Parse time zone designation strings
         timezone_abbrevs = cls._read_tz_designations(
@@ -54,7 +54,7 @@ class TimeZoneInfoBody:
 
         # Parse leap second data
         leap_second_transitions = cls._read_leap_seconds(
-            file, header_data.leap_second_count, version
+            file, header_data.leap_second_transitions_count, version
         )
 
         # Parse standard/wall and UT/local indicators
@@ -87,7 +87,7 @@ class TimeZoneInfoBody:
     ) -> list[DstTransition]:
         format_ = f">{timecnt}q" if version >= 2 else f">{timecnt}i"
         return [
-            DstTransition(datetime.fromtimestamp(transition, tz=UTC))
+            DstTransition(datetime.fromtimestamp(transition))
             for transition in struct.unpack(
                 format_, file.read(8 * timecnt if version >= 2 else 4 * timecnt)
             )

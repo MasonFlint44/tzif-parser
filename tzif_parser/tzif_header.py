@@ -8,8 +8,8 @@ class TimeZoneInfoHeader:
     version: int
     is_utc_flag_count: int
     wall_standard_flag_count: int
-    leap_second_count: int
-    transition_time_count: int
+    leap_second_transitions_count: int
+    dst_transitions_count: int
     local_time_type_count: int
     timezone_abbrev_byte_count: int
 
