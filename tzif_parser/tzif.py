@@ -19,18 +19,18 @@ class TimeZoneInfo:
 
     @property
     def version(self) -> int:
-        return self._header.version
+        return self.header.version
 
     @property
     def dst_transitions(self) -> list[DstTransition]:
-        return self._body.dst_transitions
+        return self.body.dst_transitions
 
     @property
     def leap_second_transitions(self) -> list[LeapSecondTransition]:
-        return self._body.leap_second_transitions
+        return self.body.leap_second_transitions
 
     @property
-    def _header(self) -> TimeZoneInfoHeader:
+    def header(self) -> TimeZoneInfoHeader:
         if self._header_data is None:
             raise ValueError("No header data available")
         if self._header_data.version < 2:

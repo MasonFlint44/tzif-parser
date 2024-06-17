@@ -1,6 +1,6 @@
 import struct
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import IO
 
 from .models import DstTransition, LeapSecondTransition, TimeTypeInfo, WallStandardFlag
@@ -26,7 +26,7 @@ class TimeZoneInfoBody:
         cls, file: IO[bytes], header_data: TimeZoneInfoHeader, version=1
     ) -> "TimeZoneInfoBody":
         # Parse transition times
-        dst_transitions = cls._read_transition_times(
+        dst_transition_times = cls._read_transition_times(
             file, header_data.dst_transitions_count, version
         )
 
@@ -40,8 +40,21 @@ class TimeZoneInfoBody:
             file, header_data.local_time_type_count
         )
 
-        for transition, time_type_index in zip(dst_transitions, time_type_indices):
-            transition._time_type_info = time_type_info[time_type_index]
+        dst_transitions = []
+        for index, zipped in enumerate(zip(dst_transition_times, time_type_indices)):
+            dst_transitions.append(
+                DstTransition(
+                    _transition_time=zipped[0],
+                    _time_type_info=time_type_info[zipped[1]],
+                    _prev_time_type_info=(
+                        time_type_info[time_type_indices[index - 1]]
+                        if index > 0
+                        and time_type_info[zipped[1]].is_wall_standard
+                        == WallStandardFlag.WALL
+                        else None
+                    ),
+                )
+            )
 
         # Parse time zone designation strings
         timezone_abbrevs = cls._read_tz_designations(
@@ -84,10 +97,10 @@ class TimeZoneInfoBody:
     @classmethod
     def _read_transition_times(
         cls, file: IO[bytes], timecnt: int, version: int
-    ) -> list[DstTransition]:
+    ) -> list[datetime]:
         format_ = f">{timecnt}q" if version >= 2 else f">{timecnt}i"
         return [
-            DstTransition(datetime.fromtimestamp(transition))
+            datetime.fromtimestamp(transition)
             for transition in struct.unpack(
                 format_, file.read(8 * timecnt if version >= 2 else 4 * timecnt)
             )

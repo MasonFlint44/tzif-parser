@@ -36,34 +36,50 @@ class DstTransition:
     """
 
     _transition_time: datetime
-    _time_type_info: TimeTypeInfo | None = None
+    _time_type_info: TimeTypeInfo
+    _prev_time_type_info: TimeTypeInfo | None = None
 
     # TODO: check this logic
-    # TODO: might need to look at the is_utc flag in addition to is_wall_standard
     @property
-    def transition_time_local(self) -> datetime:
+    def transition_time(self) -> datetime:
         match self.is_utc, self.is_wall_standard:
             case False, WallStandardFlag.WALL:
-                return self._transition_time.replace(tzinfo=timezone(self.utc_offset))
+                transition_time = self._transition_time.replace(
+                    tzinfo=timezone.utc
+                ).astimezone(timezone(self.utc_offset))
+                if self._prev_time_type_info:
+                    transition_time = transition_time + timedelta(
+                        seconds=self._prev_time_type_info.utc_offset_secs
+                        - self._time_type_info.utc_offset_secs
+                    )
+                return transition_time
             case False, WallStandardFlag.STANDARD:
-                # TODO: need to correct for dst adjustments
-                return self._transition_time.replace(tzinfo=timezone(self.utc_offset))
-            case True, WallStandardFlag.WALL:
-                # TODO: not sure this one is valid
-                pass
-            case True, WallStandardFlag.STANDARD:
-                # TODO: do I need to apply dst adjustments here?
                 return self._transition_time.replace(tzinfo=timezone.utc).astimezone(
                     timezone(self.utc_offset)
                 )
+            case True, WallStandardFlag.WALL:
+                # TODO: not sure this one is valid
+                raise ValueError("UTC time cannot be wall time.")
+            case True, WallStandardFlag.STANDARD:
+                return self._transition_time.replace(tzinfo=timezone.utc)
+            case _:
+                raise ValueError("Invalid state.")
+
+    @property
+    def transition_time_local(self) -> datetime:
+        return (
+            self.transition_time
+            if self.transition_time.tzinfo != timezone.utc
+            else self.transition_time.astimezone(timezone(self.utc_offset))
+        )
 
     @property
     def transition_time_utc(self) -> datetime:
-        match self.is_wall_standard:
-            case WallStandardFlag.WALL:
-                return self._transition_time
-            case WallStandardFlag.STANDARD:
-                return self._transition_time
+        return (
+            self.transition_time
+            if self.transition_time.tzinfo == timezone.utc
+            else self.transition_time.astimezone(timezone.utc)
+        )
 
     @property
     def utc_offset(self) -> timedelta:
