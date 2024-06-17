@@ -39,7 +39,19 @@ class DstTransition:
     _time_type_info: TimeTypeInfo
     _prev_time_type_info: TimeTypeInfo | None = None
 
-    # TODO: check this logic
+    @property
+    def dst_adjustment(self) -> timedelta:
+        if self._prev_time_type_info is None:
+            raise ValueError("Previous time type info not set.")
+        return timedelta(
+            seconds=self._prev_time_type_info.utc_offset_secs
+            - self._time_type_info.utc_offset_secs
+        )
+
+    @property
+    def dst_adjustment_hours(self) -> float:
+        return self.dst_adjustment.total_seconds() / 3600
+
     @property
     def transition_time(self) -> datetime:
         match self.is_utc, self.is_wall_standard:
@@ -48,17 +60,13 @@ class DstTransition:
                     tzinfo=timezone.utc
                 ).astimezone(timezone(self.utc_offset))
                 if self._prev_time_type_info:
-                    transition_time = transition_time + timedelta(
-                        seconds=self._prev_time_type_info.utc_offset_secs
-                        - self._time_type_info.utc_offset_secs
-                    )
+                    transition_time = transition_time + self.dst_adjustment
                 return transition_time
             case False, WallStandardFlag.STANDARD:
                 return self._transition_time.replace(tzinfo=timezone.utc).astimezone(
                     timezone(self.utc_offset)
                 )
             case True, WallStandardFlag.WALL:
-                # TODO: not sure this one is valid
                 raise ValueError("UTC time cannot be wall time.")
             case True, WallStandardFlag.STANDARD:
                 return self._transition_time.replace(tzinfo=timezone.utc)

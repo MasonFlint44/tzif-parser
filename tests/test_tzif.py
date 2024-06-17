@@ -71,7 +71,7 @@ def test_read(
     assert len(tz_info.leap_second_transitions) == 0
 
     def validate_transition(
-        checkpoint_time, is_dst, abbrev, offset, transition_time_utc
+        checkpoint_time, is_dst, abbrev, dst_adjustment, utc_offset, transition_time_utc
     ):
         next_dst_transition = next(
             (
@@ -85,20 +85,23 @@ def test_read(
         assert next_dst_transition is not None
         assert next_dst_transition.is_dst is is_dst
         assert next_dst_transition.abbreviation == abbrev
-        assert next_dst_transition.utc_offset == timedelta(hours=offset)
-        assert next_dst_transition.utc_offset_hours == offset
+        assert next_dst_transition.dst_adjustment == timedelta(hours=dst_adjustment)
+        assert next_dst_transition.dst_adjustment_hours == dst_adjustment
+        assert next_dst_transition.utc_offset == timedelta(hours=utc_offset)
+        assert next_dst_transition.utc_offset_hours == utc_offset
         assert next_dst_transition.transition_time == transition_time_utc.astimezone(
-            timezone(timedelta(hours=offset))
+            timezone(timedelta(hours=utc_offset))
         )
         assert (
             next_dst_transition.transition_time_local
-            == transition_time_utc.astimezone(timezone(timedelta(hours=offset)))
+            == transition_time_utc.astimezone(timezone(timedelta(hours=utc_offset)))
         )
         assert next_dst_transition.transition_time_utc == transition_time_utc
 
     validate_transition(
-        std_checkpoint_time, True, dst_abbrev, dst_offset, dst_start_utc
+        std_checkpoint_time, True, dst_abbrev, -1, dst_offset, dst_start_utc
     )
+    # TODO:
     validate_transition(
-        dst_checkpoint_time, False, std_abbrev, std_offset, std_start_utc
+        dst_checkpoint_time, False, std_abbrev, 1, std_offset, std_start_utc
     )
