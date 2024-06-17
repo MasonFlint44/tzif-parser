@@ -3,12 +3,14 @@ from zoneinfo import ZoneInfo
 
 from .tzif import TimeZoneInfo
 
-tz_info = TimeZoneInfo.read("Africa/Nairobi")
+TIMEZONE_NAME = "America/Chicago"
+
+tz_info = TimeZoneInfo.read(TIMEZONE_NAME)
 next_dst_transition = next(
     (
         transition
         for transition in tz_info.dst_transitions
-        if transition.transition_time > datetime.now(ZoneInfo("Africa/Nairobi"))
+        if transition.transition_time > datetime.now(ZoneInfo(TIMEZONE_NAME))
     ),
     None,
 )

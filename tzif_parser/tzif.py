@@ -40,10 +40,10 @@ class TimeZoneInfo:
         return self._v2_header_data
 
     @property
-    def _body(self) -> TimeZoneInfoBody:
+    def body(self) -> TimeZoneInfoBody:
         if self._body_data is None:
             raise ValueError("No body data available")
-        if self._header.version < 2:
+        if self.header.version < 2:
             return self._body_data
         if self._v2_body_data is None:
             raise ValueError("No body data available")
