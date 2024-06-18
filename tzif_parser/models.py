@@ -12,32 +12,37 @@ class WallStandardFlag(Enum):
     STANDARD = 1
 
 
-@dataclass
 class TimeTypeInfo:
     """
     Represents a ttinfo structure in a TZif file.
     """
 
-    utc_offset_secs: int
-    is_dst: bool
-    _abbrev_index: int
-    abbrev: str | None = None
-    is_utc = False
-    is_wall_standard = WallStandardFlag.WALL
+    def __init__(self, utc_offset_secs: int, is_dst: bool, abbrev_index: int) -> None:
+        self.utc_offset_secs = utc_offset_secs
+        self.is_dst = is_dst
+        self._abbrev_index = abbrev_index
+        self.abbrev = None
+        self.is_utc = False
+        self.is_wall_standard = WallStandardFlag.WALL
 
     def set_abbrev(self, timezone_abbrevs: str) -> None:
         self.abbrev, _, _ = timezone_abbrevs[self._abbrev_index :].partition("\x00")
 
 
-@dataclass
 class DstTransition:
     """
     Represents a transition time in a TZif file.
     """
 
-    _transition_time: datetime
-    _time_type_info: TimeTypeInfo
-    _prev_time_type_info: TimeTypeInfo | None = None
+    def __init__(
+        self,
+        transition_time: datetime,
+        time_type_info: TimeTypeInfo,
+        prev_time_type_info: TimeTypeInfo | None = None,
+    ) -> None:
+        self._transition_time = transition_time
+        self._time_type_info = time_type_info
+        self._prev_time_type_info = prev_time_type_info
 
     @property
     def dst_adjustment(self) -> timedelta:

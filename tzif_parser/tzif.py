@@ -7,15 +7,24 @@ from .tzif_body import TimeZoneInfoBody
 from .tzif_header import TimeZoneInfoHeader
 
 
-@dataclass
 class TimeZoneInfo:
-    timezone_name: str
-    timezone_dir: str
-    posix_tz_info: PosixTzInfo | None
-    _header_data: TimeZoneInfoHeader | None
-    _body_data: TimeZoneInfoBody | None
-    _v2_header_data: TimeZoneInfoHeader | None = None
-    _v2_body_data: TimeZoneInfoBody | None = None
+    def __init__(
+        self,
+        timezone_name: str,
+        timezone_dir: str,
+        header_data: TimeZoneInfoHeader,
+        body_data: TimeZoneInfoBody,
+        v2_header_data: TimeZoneInfoHeader | None = None,
+        v2_body_data: TimeZoneInfoBody | None = None,
+        posix_tz_info: PosixTzInfo | None = None,
+    ) -> None:
+        self.timezone_name = timezone_name
+        self.timezone_dir = timezone_dir
+        self.posix_tz_info = posix_tz_info
+        self._header_data = header_data
+        self._body_data = body_data
+        self._v2_header_data = v2_header_data
+        self._v2_body_data = v2_body_data
 
     @property
     def version(self) -> int:
@@ -57,7 +66,7 @@ class TimeZoneInfo:
             header_data = TimeZoneInfoHeader.read(file)
             body_data = TimeZoneInfoBody.read(file, header_data)
             if header_data.version < 2:
-                return cls(timezone_name, timezone_dir, None, header_data, body_data)
+                return cls(timezone_name, timezone_dir, header_data, body_data)
 
             v2_header_data = TimeZoneInfoHeader.read(file)
             v2_body_data = TimeZoneInfoBody.read(
@@ -68,11 +77,11 @@ class TimeZoneInfo:
             return cls(
                 timezone_name,
                 timezone_dir,
-                v2_posix_string,
                 header_data,
                 body_data,
                 v2_header_data,
                 v2_body_data,
+                v2_posix_string,
             )
 
     @classmethod

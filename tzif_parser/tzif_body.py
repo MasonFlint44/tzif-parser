@@ -9,13 +9,20 @@ from .tzif_header import TimeZoneInfoHeader
 
 # TODO: handle version 4 - first leap second can be neither -1 nor +1
 # TODO: handle version 4 - if the last leap second transition matches the previous, the last entry represents the expiration of the leap second table rather than a leap second
-@dataclass
 class TimeZoneInfoBody:
-    dst_transitions: list[DstTransition]
-    leap_second_transitions: list[LeapSecondTransition]
-    _time_type_info: list[TimeTypeInfo]
-    _time_type_indices: list[int]
-    _timezone_abbrevs: str
+    def __init__(
+        self,
+        dst_transitions,
+        leap_second_transitions,
+        time_type_info,
+        time_type_indices,
+        timezone_abbrevs,
+    ) -> None:
+        self.dst_transitions = dst_transitions
+        self.leap_second_transitions = leap_second_transitions
+        self._time_type_info = time_type_info
+        self._time_type_indices = time_type_indices
+        self._timezone_abbrevs = timezone_abbrevs
 
     @property
     def timezone_abbrevs(self) -> list[str]:
@@ -44,9 +51,9 @@ class TimeZoneInfoBody:
         for index, zipped in enumerate(zip(dst_transition_times, time_type_indices)):
             dst_transitions.append(
                 DstTransition(
-                    _transition_time=zipped[0],
-                    _time_type_info=time_type_info[zipped[1]],
-                    _prev_time_type_info=(
+                    transition_time=zipped[0],
+                    time_type_info=time_type_info[zipped[1]],
+                    prev_time_type_info=(
                         time_type_info[time_type_indices[index - 1]]
                         if index > 0
                         and time_type_info[zipped[1]].is_wall_standard
