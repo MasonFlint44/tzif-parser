@@ -46,21 +46,22 @@ class TimeZoneInfoBody:
             file, header_data.local_time_type_count
         )
 
-        dst_transitions = []
-        for index, zipped in enumerate(zip(dst_transition_times, time_type_indices)):
-            dst_transitions.append(
-                DstTransition(
-                    transition_time=zipped[0],
-                    time_type_info=time_type_info[zipped[1]],
-                    prev_time_type_info=(
-                        time_type_info[time_type_indices[index - 1]]
-                        if index > 0
-                        and time_type_info[zipped[1]].is_wall_standard
-                        == WallStandardFlag.WALL
-                        else None
-                    ),
-                )
+        dst_transitions = [
+            DstTransition(
+                transition_time=dst_transition_time,
+                time_type_info=time_type_info[time_type_index],
+                prev_time_type_info=(
+                    time_type_info[time_type_indices[transition_index - 1]]
+                    if transition_index > 0
+                    and time_type_info[time_type_index].is_wall_standard
+                    == WallStandardFlag.WALL
+                    else None
+                ),
             )
+            for transition_index, (dst_transition_time, time_type_index) in enumerate(
+                zip(dst_transition_times, time_type_indices)
+            )
+        ]
 
         # Parse time zone designation strings
         timezone_abbrevs = cls._read_tz_designations(
@@ -69,7 +70,7 @@ class TimeZoneInfoBody:
 
         # Set abbreviations on ttinfo structures
         for ttinfo in time_type_info:
-            ttinfo.set_abbrev(timezone_abbrevs)
+            ttinfo.timezone_abbrevs = timezone_abbrevs
 
         # Parse leap second data
         leap_second_transitions = cls._read_leap_seconds(
@@ -83,14 +84,16 @@ class TimeZoneInfoBody:
         is_utc_flags = cls._read_indicators(file, header_data.is_utc_flag_count)
 
         # Set standard/wall indicators on ttinfo structures
-        for index in range(header_data.wall_standard_flag_count):
-            time_type_info[index].is_wall_standard = WallStandardFlag(
-                is_standard_flags[index]
+        for transition_index in range(header_data.wall_standard_flag_count):
+            time_type_info[transition_index].is_wall_standard = WallStandardFlag(
+                is_standard_flags[transition_index]
             )
 
         # Set UTC/local indicators on ttinfo structures
-        for index in range(header_data.is_utc_flag_count):
-            time_type_info[index].is_utc = bool(is_utc_flags[index])
+        for transition_index in range(header_data.is_utc_flag_count):
+            time_type_info[transition_index].is_utc = bool(
+                is_utc_flags[transition_index]
+            )
 
         return TimeZoneInfoBody(
             dst_transitions,
@@ -124,12 +127,10 @@ class TimeZoneInfoBody:
             ">i?B"  # 4-byte signed integer, 1-byte boolean, 1-byte unsigned integer
         )
         ttinfo_size = struct.calcsize(ttinfo_format)
-
-        ttinfos = []
-        for _ in range(typecnt):
-            ttinfo_struct = struct.unpack(ttinfo_format, file.read(ttinfo_size))
-            ttinfos.append(TimeTypeInfo(*ttinfo_struct))
-        return ttinfos
+        return [
+            TimeTypeInfo(*struct.unpack(ttinfo_format, file.read(ttinfo_size)))
+            for _ in range(typecnt)
+        ]
 
     @classmethod
     def _read_tz_designations(cls, file: IO[bytes], charcnt: int) -> str:
