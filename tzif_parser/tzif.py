@@ -1,5 +1,4 @@
 import os.path
-from dataclasses import dataclass
 
 from .models import DstTransition, LeapSecondTransition
 from .posix import PosixTzInfo
