@@ -101,7 +101,6 @@ def test_read(
     validate_transition(
         std_checkpoint_time, True, dst_abbrev, -1, dst_offset, dst_start_utc
     )
-    # TODO:
     validate_transition(
         dst_checkpoint_time, False, std_abbrev, 1, std_offset, std_start_utc
     )
