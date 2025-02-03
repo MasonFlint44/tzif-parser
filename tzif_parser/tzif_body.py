@@ -2,7 +2,9 @@ import struct
 from datetime import datetime
 from typing import IO
 
-from .models import DstTransition, LeapSecondTransition, TimeTypeInfo, WallStandardFlag
+from .dst_transition import DstTransition
+from .models import LeapSecondTransition, WallStandardFlag
+from .ttinfo import TimeTypeInfo
 from .tzif_header import TimeZoneInfoHeader
 
 

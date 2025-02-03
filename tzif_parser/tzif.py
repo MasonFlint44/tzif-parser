@@ -1,6 +1,7 @@
 import os.path
 
-from .models import DstTransition, LeapSecondTransition
+from .dst_transition import DstTransition
+from .models import LeapSecondTransition
 from .posix import PosixTzInfo
 from .tzif_body import TimeZoneInfoBody
 from .tzif_header import TimeZoneInfoHeader
