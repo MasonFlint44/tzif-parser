@@ -23,4 +23,5 @@ class TimeTypeInfo:
     def abbrev(self) -> str:
         if self.timezone_abbrevs is None:
             raise ValueError("Time zone abbreviations not set.")
-        return self.timezone_abbrevs[self._abbrev_index :].partition("\x00")[0]
+        else:
+            return self.timezone_abbrevs[self._abbrev_index :].partition("\x00")[0]

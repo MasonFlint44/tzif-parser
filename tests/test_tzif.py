@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -65,7 +66,9 @@ def test_read(
     tz_info = TimeZoneInfo.read(timezone_name)
 
     assert tz_info.timezone_name == timezone_name
-    assert tz_info.timezone_dir == "/usr/share/zoneinfo"
+    assert tz_info.filepath == os.path.join(
+        "/usr/share/zoneinfo", *timezone_name.split("/")
+    )
     assert tz_info.version == 2
     assert len(tz_info.dst_transitions) == dst_transition_count
     assert len(tz_info.leap_second_transitions) == 0

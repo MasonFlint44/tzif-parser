@@ -11,7 +11,7 @@ class TimeZoneInfo:
     def __init__(
         self,
         timezone_name: str,
-        timezone_dir: str,
+        filepath: str,
         header_data: TimeZoneInfoHeader,
         body_data: TimeZoneInfoBody,
         v2_header_data: TimeZoneInfoHeader | None = None,
@@ -19,7 +19,7 @@ class TimeZoneInfo:
         posix_tz_info: PosixTzInfo | None = None,
     ) -> None:
         self.timezone_name = timezone_name
-        self.timezone_dir = timezone_dir
+        self.filepath = filepath
         self.posix_tz_info = posix_tz_info
         self._header_data = header_data
         self._body_data = body_data
@@ -66,7 +66,7 @@ class TimeZoneInfo:
             header_data = TimeZoneInfoHeader.read(file)
             body_data = TimeZoneInfoBody.read(file, header_data)
             if header_data.version < 2:
-                return cls(timezone_name, timezone_dir, header_data, body_data)
+                return cls(timezone_name, filepath, header_data, body_data)
 
             v2_header_data = TimeZoneInfoHeader.read(file)
             v2_body_data = TimeZoneInfoBody.read(
@@ -76,7 +76,7 @@ class TimeZoneInfo:
 
             return cls(
                 timezone_name,
-                timezone_dir,
+                filepath,
                 header_data,
                 body_data,
                 v2_header_data,
@@ -86,7 +86,4 @@ class TimeZoneInfo:
 
     @classmethod
     def get_zoneinfo_filepath(cls, timezone_name: str, zoneinfo_dir: str) -> str:
-        timezone_name_parts = timezone_name.partition("/")
-        return os.path.join(
-            zoneinfo_dir, timezone_name_parts[0], timezone_name_parts[2]
-        )
+        return os.path.join(zoneinfo_dir, *timezone_name.split("/"))
