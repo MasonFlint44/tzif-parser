@@ -2,9 +2,7 @@ import struct
 from datetime import datetime
 from typing import IO
 
-from .dst_transition import DstTransition
-from .models import LeapSecondTransition, WallStandardFlag
-from .ttinfo import TimeTypeInfo
+from .models import LeapSecondTransition, TimeTypeInfo
 from .tzif_header import TimeZoneInfoHeader
 
 
@@ -18,23 +16,27 @@ class TimeZoneInfoBody:
         time_type_info,
         time_type_indices,
         timezone_abbrevs,
+        wall_standard_flags,
+        is_utc_flags,
     ) -> None:
         self.dst_transitions = dst_transitions
         self.leap_second_transitions = leap_second_transitions
-        self._time_type_info = time_type_info
-        self._time_type_indices = time_type_indices
+        self.time_type_info = time_type_info
+        self.time_type_indices = time_type_indices
         self._timezone_abbrevs = timezone_abbrevs
+        self.wall_standard_flags = wall_standard_flags
+        self.is_utc_flags = is_utc_flags
 
     @property
     def timezone_abbrevs(self) -> list[str]:
-        return self._timezone_abbrevs.split("\x00")
+        return self._timezone_abbrevs.rstrip("\x00").split("\x00")
 
     @classmethod
     def read(
         cls, file: IO[bytes], header_data: TimeZoneInfoHeader, version=1
     ) -> "TimeZoneInfoBody":
         # Parse transition times
-        dst_transition_times = cls._read_transition_times(
+        dst_transitions = cls._read_transition_times(
             file, header_data.dst_transitions_count, version
         )
 
@@ -48,31 +50,10 @@ class TimeZoneInfoBody:
             file, header_data.local_time_type_count
         )
 
-        dst_transitions = [
-            DstTransition(
-                transition_time=dst_transition_time,
-                time_type_info=time_type_info[time_type_index],
-                prev_time_type_info=(
-                    time_type_info[time_type_indices[transition_index - 1]]
-                    if transition_index > 0
-                    and time_type_info[time_type_index].is_wall_standard
-                    == WallStandardFlag.WALL
-                    else None
-                ),
-            )
-            for transition_index, (dst_transition_time, time_type_index) in enumerate(
-                zip(dst_transition_times, time_type_indices)
-            )
-        ]
-
         # Parse time zone designation strings
         timezone_abbrevs = cls._read_tz_designations(
             file, header_data.timezone_abbrev_byte_count
         )
-
-        # Set abbreviations on ttinfo structures
-        for ttinfo in time_type_info:
-            ttinfo.timezone_abbrevs = timezone_abbrevs
 
         # Parse leap second data
         leap_second_transitions = cls._read_leap_seconds(
@@ -80,22 +61,10 @@ class TimeZoneInfoBody:
         )
 
         # Parse standard/wall and UT/local indicators
-        is_standard_flags = cls._read_indicators(
+        wall_standard_flags = cls._read_indicators(
             file, header_data.wall_standard_flag_count
         )
         is_utc_flags = cls._read_indicators(file, header_data.is_utc_flag_count)
-
-        # Set standard/wall indicators on ttinfo structures
-        for transition_index in range(header_data.wall_standard_flag_count):
-            time_type_info[transition_index].is_wall_standard = WallStandardFlag(
-                is_standard_flags[transition_index]
-            )
-
-        # Set UTC/local indicators on ttinfo structures
-        for transition_index in range(header_data.is_utc_flag_count):
-            time_type_info[transition_index].is_utc = bool(
-                is_utc_flags[transition_index]
-            )
 
         return TimeZoneInfoBody(
             dst_transitions,
@@ -103,6 +72,8 @@ class TimeZoneInfoBody:
             time_type_info,
             time_type_indices,
             timezone_abbrevs,
+            wall_standard_flags,
+            is_utc_flags,
         )
 
     @classmethod

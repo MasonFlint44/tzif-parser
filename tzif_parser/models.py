@@ -19,3 +19,14 @@ class LeapSecondTransition:
 
     transition_time: int
     correction: int
+
+
+@dataclass
+class TimeTypeInfo:
+    """
+    Represents a ttinfo structure in a TZif file.
+    """
+
+    utc_offset_secs: int
+    is_dst: bool
+    abbrev_index: int

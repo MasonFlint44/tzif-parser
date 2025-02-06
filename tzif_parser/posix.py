@@ -44,6 +44,7 @@ class PosixTzDateTime:
 # TODO: handle version 3 - make dst all year if it starts jan 1 at 00:00 and ends dec 31 at 24:00 plus difference between dst and std
 @dataclass
 class PosixTzInfo:
+    posix_string: str
     standard_abbrev: str
     utc_offset_hours: int
     dst_abbrev: str | None
@@ -62,6 +63,7 @@ class PosixTzInfo:
         standard_abbrev, utc_offset_hours, dst_abbrev = re.split(
             b"(-?[0-9]+)", local_tz
         )
+        posix_string = posix_string.decode("utf-8")
         standard_abbrev = standard_abbrev.decode("utf-8")
         dst_abbrev = dst_abbrev.decode("utf-8") if len(dst_abbrev) > 0 else None
         utc_offset_hours = int(utc_offset_hours.decode("utf-8"))
@@ -69,6 +71,7 @@ class PosixTzInfo:
         dst_end = cls._read_datetime(dst_end)
 
         return cls(
+            posix_string,
             standard_abbrev,
             utc_offset_hours,
             dst_abbrev,

@@ -1,7 +1,5 @@
 import os.path
 
-from .dst_transition import DstTransition
-from .models import LeapSecondTransition
 from .posix import PosixTzInfo
 from .tzif_body import TimeZoneInfoBody
 from .tzif_header import TimeZoneInfoHeader
@@ -20,7 +18,7 @@ class TimeZoneInfo:
     ) -> None:
         self.timezone_name = timezone_name
         self.filepath = filepath
-        self.posix_tz_info = posix_tz_info
+        self._posix_tz_info = posix_tz_info
         self._header_data = header_data
         self._body_data = body_data
         self._v2_header_data = v2_header_data
@@ -29,14 +27,6 @@ class TimeZoneInfo:
     @property
     def version(self) -> int:
         return self.header.version
-
-    @property
-    def dst_transitions(self) -> list[DstTransition]:
-        return self.body.dst_transitions
-
-    @property
-    def leap_second_transitions(self) -> list[LeapSecondTransition]:
-        return self.body.leap_second_transitions
 
     @property
     def header(self) -> TimeZoneInfoHeader:
@@ -52,15 +42,21 @@ class TimeZoneInfo:
     def body(self) -> TimeZoneInfoBody:
         if self._body_data is None:
             raise ValueError("No body data available")
-        if self.header.version < 2:
+        if self.version < 2:
             return self._body_data
         if self._v2_body_data is None:
             raise ValueError("No body data available")
         return self._v2_body_data
 
+    @property
+    def footer(self) -> PosixTzInfo:
+        if self._posix_tz_info is None:
+            raise ValueError("No footer data available")
+        return self._posix_tz_info
+
     @classmethod
     def read(cls, timezone_name: str):
-        timezone_dir = os.environ.get("TZDIR") or "/usr/share/zoneinfo"
+        timezone_dir = os.environ.get("TZDIR", "/usr/share/zoneinfo")
         filepath = cls.get_zoneinfo_filepath(timezone_name, timezone_dir)
         with open(filepath, "rb") as file:
             header_data = TimeZoneInfoHeader.read(file)
