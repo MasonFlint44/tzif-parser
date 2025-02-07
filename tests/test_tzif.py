@@ -29,9 +29,10 @@ def test_read(
     )
     assert tz_info.version == 2
 
-    assert tz_info.header.dst_transitions_count == dst_transition_count
-    assert len(tz_info.body.dst_transitions) == dst_transition_count
+    assert tz_info.header.transitions_count == dst_transition_count
+    assert len(tz_info.body.transition_times) == dst_transition_count
     assert len(tz_info.body.time_type_indices) == dst_transition_count
+    assert len(tz_info.body.transitions) == dst_transition_count
 
     assert tz_info.header.local_time_type_count == local_time_type_count
     assert tz_info.header.wall_standard_flag_count == local_time_type_count

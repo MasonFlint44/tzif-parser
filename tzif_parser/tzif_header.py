@@ -9,7 +9,7 @@ class TimeZoneInfoHeader:
     is_utc_flag_count: int
     wall_standard_flag_count: int
     leap_second_transitions_count: int
-    dst_transitions_count: int
+    transitions_count: int
     local_time_type_count: int
     timezone_abbrev_byte_count: int
 
@@ -22,9 +22,9 @@ class TimeZoneInfoHeader:
             magic,
             version,
             is_utc_flag_count,
-            is_standard_flag_count,
+            wall_standard_flag_count,
             leap_second_count,
-            transition_time_count,
+            transitions_count,
             local_time_type_count,
             timezone_abbrev_byte_count,
         ) = header_data
@@ -35,9 +35,9 @@ class TimeZoneInfoHeader:
         return cls(
             int(version) if version != b"\x00" else 1,
             is_utc_flag_count,
-            is_standard_flag_count,
+            wall_standard_flag_count,
             leap_second_count,
-            transition_time_count,
+            transitions_count,
             local_time_type_count,
             timezone_abbrev_byte_count,
         )

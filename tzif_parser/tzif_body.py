@@ -2,7 +2,8 @@ import struct
 from datetime import datetime
 from typing import IO
 
-from .models import LeapSecondTransition, TimeTypeInfo
+from .models import LeapSecondTransition, TimeTypeInfo, WallStandardFlag
+from .tz_transition import TimeZoneTransition
 from .tzif_header import TimeZoneInfoHeader
 
 
@@ -11,7 +12,7 @@ from .tzif_header import TimeZoneInfoHeader
 class TimeZoneInfoBody:
     def __init__(
         self,
-        dst_transitions,
+        transition_times,
         leap_second_transitions,
         time_type_info,
         time_type_indices,
@@ -19,13 +20,26 @@ class TimeZoneInfoBody:
         wall_standard_flags,
         is_utc_flags,
     ) -> None:
-        self.dst_transitions = dst_transitions
+        self.transition_times = transition_times
         self.leap_second_transitions = leap_second_transitions
         self.time_type_info = time_type_info
         self.time_type_indices = time_type_indices
         self._timezone_abbrevs = timezone_abbrevs
         self.wall_standard_flags = wall_standard_flags
         self.is_utc_flags = is_utc_flags
+
+    @property
+    def transitions(self) -> list[TimeZoneTransition]:
+        return [
+            TimeZoneTransition(
+                transition_time,
+                ttinfo := self.time_type_info[self.time_type_indices[i]],
+                WallStandardFlag(self.wall_standard_flags[self.time_type_indices[i]]),
+                bool(self.is_utc_flags[self.time_type_indices[i]]),
+                self._timezone_abbrevs[ttinfo.abbrev_index :].partition("\x00")[0],
+            )
+            for i, transition_time in enumerate(self.transition_times)
+        ]
 
     @property
     def timezone_abbrevs(self) -> list[str]:
@@ -37,12 +51,12 @@ class TimeZoneInfoBody:
     ) -> "TimeZoneInfoBody":
         # Parse transition times
         dst_transitions = cls._read_transition_times(
-            file, header_data.dst_transitions_count, version
+            file, header_data.transitions_count, version
         )
 
         # Parse local time type indices
         time_type_indices = cls._read_time_type_indices(
-            file, header_data.dst_transitions_count
+            file, header_data.transitions_count
         )
 
         # Parse ttinfo structures
