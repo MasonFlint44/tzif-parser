@@ -83,3 +83,14 @@ class TimeZoneInfo:
     @classmethod
     def get_zoneinfo_filepath(cls, timezone_name: str, zoneinfo_dir: str) -> str:
         return os.path.join(zoneinfo_dir, *timezone_name.split("/"))
+
+    def __repr__(self) -> str:
+        return (
+            f"TimeZoneInfo(timezone_name={self.timezone_name!r}, "
+            f"filepath={self.filepath!r}, "
+            f"header_data={self._header_data!r}, "
+            f"body_data={self._body_data!r}, "
+            f"v2_header_data={self._v2_header_data!r}, "
+            f"v2_body_data={self._v2_body_data!r}, "
+            f"posix_tz_info={self._posix_tz_info!r})"
+        )

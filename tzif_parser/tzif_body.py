@@ -138,3 +138,14 @@ class TimeZoneInfoBody:
     @classmethod
     def _read_indicators(cls, file: IO[bytes], count: int) -> list[int]:
         return list(file.read(count))
+
+    def __repr__(self) -> str:
+        return (
+            f"TimeZoneInfoBody(transition_times={self.transition_times!r}, "
+            f"leap_second_transitions={self.leap_second_transitions!r}, "
+            f"time_type_info={self.time_type_info!r}, "
+            f"time_type_indices={self.time_type_indices!r}, "
+            f"timezone_abbrevs={self._timezone_abbrevs!r}, "
+            f"wall_standard_flags={self.wall_standard_flags!r}, "
+            f"is_utc_flags={self.is_utc_flags!r})"
+        )

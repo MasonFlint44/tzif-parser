@@ -52,3 +52,12 @@ class TimeZoneTransition:
     @property
     def is_utc(self) -> bool:
         return self._is_utc
+
+    def __repr__(self) -> str:
+        return (
+            f"TimeZoneTransition(transition_time={self._transition_time!r}, "
+            f"time_type_info={self._time_type_info!r}, "
+            f"wall_standard_flag={self._wall_standard_flag!r}, "
+            f"is_utc={self._is_utc!r}, "
+            f"abbreviation={self._abbreviation!r})"
+        )
