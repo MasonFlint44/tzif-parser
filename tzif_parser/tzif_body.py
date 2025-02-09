@@ -2,7 +2,7 @@ import struct
 from datetime import datetime
 from typing import IO
 
-from .models import LeapSecondTransition, TimeTypeInfo, WallStandardFlag
+from .models import LeapSecondTransition, TimeTypeInfo
 from .tz_transition import TimeZoneTransition
 from .tzif_header import TimeZoneInfoHeader
 
@@ -14,7 +14,7 @@ class TimeZoneInfoBody:
         self,
         transition_times,
         leap_second_transitions,
-        time_type_info,
+        time_type_infos,
         time_type_indices,
         timezone_abbrevs,
         wall_standard_flags,
@@ -22,7 +22,7 @@ class TimeZoneInfoBody:
     ) -> None:
         self.transition_times = transition_times
         self.leap_second_transitions = leap_second_transitions
-        self.time_type_info = time_type_info
+        self.time_type_infos = time_type_infos
         self.time_type_indices = time_type_indices
         self._timezone_abbrevs = timezone_abbrevs
         self.wall_standard_flags = wall_standard_flags
@@ -33,12 +33,14 @@ class TimeZoneInfoBody:
         return [
             TimeZoneTransition(
                 transition_time,
-                ttinfo := self.time_type_info[self.time_type_indices[i]],
-                WallStandardFlag(self.wall_standard_flags[self.time_type_indices[i]]),
-                bool(self.is_utc_flags[self.time_type_indices[i]]),
-                self._timezone_abbrevs[ttinfo.abbrev_index :].partition("\x00")[0],
+                self.time_type_infos,
+                self.time_type_indices,
+                transition_index,
+                self.wall_standard_flags,
+                self.is_utc_flags,
+                self._timezone_abbrevs,
             )
-            for i, transition_time in enumerate(self.transition_times)
+            for transition_index, transition_time in enumerate(self.transition_times)
         ]
 
     @property
@@ -143,7 +145,7 @@ class TimeZoneInfoBody:
         return (
             f"TimeZoneInfoBody(transition_times={self.transition_times!r}, "
             f"leap_second_transitions={self.leap_second_transitions!r}, "
-            f"time_type_info={self.time_type_info!r}, "
+            f"time_type_infos={self.time_type_infos!r}, "
             f"time_type_indices={self.time_type_indices!r}, "
             f"timezone_abbrevs={self._timezone_abbrevs!r}, "
             f"wall_standard_flags={self.wall_standard_flags!r}, "

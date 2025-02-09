@@ -7,16 +7,39 @@ class TimeZoneTransition:
     def __init__(
         self,
         transition_time: datetime,
-        time_type_info: TimeTypeInfo,
-        wall_standard_flag: WallStandardFlag,
-        is_utc: bool,
-        abbreviation: str,
+        time_type_infos: list[TimeTypeInfo],
+        time_type_indices: list[int],
+        transition_index: int,
+        wall_standard_flags: list[WallStandardFlag],
+        is_utc_flags: list[int],
+        timezone_abbrevs: str,
     ) -> None:
         self._transition_time = transition_time
-        self._time_type_info = time_type_info
-        self._wall_standard_flag = wall_standard_flag
-        self._is_utc = is_utc
-        self._abbreviation = abbreviation
+        self._time_type_infos = time_type_infos
+        self._time_type_indices = time_type_indices
+        self._transition_index = transition_index
+        self._time_type_info = time_type_infos[time_type_indices[transition_index]]
+        self._wall_standard_flag = WallStandardFlag(
+            wall_standard_flags[time_type_indices[transition_index]]
+        )
+        self._is_utc = bool(is_utc_flags[time_type_indices[transition_index]])
+        self._abbreviation = timezone_abbrevs[
+            self._time_type_info.abbrev_index :
+        ].partition("\x00")[0]
+
+    @property
+    def transition_time_local_standard(self) -> datetime:
+        if self._transition_index == 0:
+            ttinfo = self._time_type_infos[0]
+            return self.transition_time_utc.astimezone(
+                timezone(timedelta(seconds=ttinfo.utc_offset_secs))
+            )
+        ttinfo = self._time_type_infos[
+            self._time_type_indices[self._transition_index - 1]
+        ]
+        return self.transition_time_utc.astimezone(
+            timezone(timedelta(seconds=ttinfo.utc_offset_secs))
+        )
 
     @property
     def transition_time_local_wall(self) -> datetime:
@@ -51,12 +74,3 @@ class TimeZoneTransition:
     @property
     def is_utc(self) -> bool:
         return self._is_utc
-
-    def __repr__(self) -> str:
-        return (
-            f"TimeZoneTransition(transition_time={self._transition_time!r}, "
-            f"time_type_info={self._time_type_info!r}, "
-            f"wall_standard_flag={self._wall_standard_flag!r}, "
-            f"is_utc={self._is_utc!r}, "
-            f"abbreviation={self._abbreviation!r})"
-        )
