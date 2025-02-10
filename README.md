@@ -10,12 +10,10 @@
 
 ## Installation
 
-To install `tzif-parser`, clone the repository and install the dependencies:
+To install `tzif-parser`, install it from PyPI using pip:
 
 ```sh
-git clone https://github.com/yourusername/tzif-parser.git
-cd tzif-parser
-pip install -r requirements.txt
+pip install tzif-parser
 ```
 
 ## Usage
