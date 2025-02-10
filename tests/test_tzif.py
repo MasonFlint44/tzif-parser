@@ -7,6 +7,11 @@ from my_zoneinfo.zoneinfo import ZoneInfo
 from tzif_parser import TimeZoneInfo
 
 
+def test_read_invalid_timezone():
+    with pytest.raises(FileNotFoundError):
+        TimeZoneInfo.read("Invalid/Timezone")
+
+
 @pytest.mark.parametrize(
     "timezone_name",
     [
