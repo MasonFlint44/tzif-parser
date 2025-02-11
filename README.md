@@ -85,6 +85,8 @@ Represents a single time zone transition.
 - `abbreviation`: The time zone abbreviation.
 - `utc_offset_secs`: The UTC offset in seconds.
 - `utc_offset_hours`: The UTC offset in hours.
+- `dst_offset_secs`: The DST offset in seconds.
+- `dst_offset_hours`: The DST offset in hours.
 - `is_dst`: Whether the transition is during daylight saving time.
 - `wall_standard_flag`: The wall/standard flag.
 - `is_utc`: Whether the transition time is in UTC.

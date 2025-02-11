@@ -56,6 +56,29 @@ class TimeZoneTransition:
         return self._abbreviation
 
     @property
+    def dst_offset_secs(self) -> int:
+        if not self.is_dst:
+            return 0
+        # Get the ttinfo for the previous transition
+        ttinfo = self._time_type_infos[
+            self._time_type_indices[self._transition_index - 1]
+        ]
+        if ttinfo.is_dst:
+            return self.utc_offset_secs - ttinfo.utc_offset_secs
+        # Get the ttinfo for the next transition
+        ttinfo = self._time_type_infos[
+            self._time_type_indices[self._transition_index + 1]
+        ]
+        if ttinfo.is_dst:
+            return ttinfo.utc_offset_secs - self.utc_offset_secs
+        # If the previous and next ttinfos are not DST, then we return a best guess
+        return 3600
+
+    @property
+    def dst_offset_hours(self) -> float:
+        return self.dst_offset_secs / 3600
+
+    @property
     def utc_offset_secs(self) -> int:
         return self._time_type_info.utc_offset_secs
 
