@@ -1,3 +1,4 @@
+import bisect
 import struct
 from datetime import datetime
 from typing import IO
@@ -46,6 +47,11 @@ class TimeZoneInfoBody:
     @property
     def timezone_abbrevs(self) -> list[str]:
         return self._timezone_abbrevs.rstrip("\x00").split("\x00")
+
+    def find_transition(self, dt: datetime) -> TimeZoneTransition:
+        # Find the index of the transition time that is less than or equal to the given datetime
+        index = bisect.bisect_right(self.transition_times, dt) - 1
+        return self.transitions[index]
 
     @classmethod
     def read(

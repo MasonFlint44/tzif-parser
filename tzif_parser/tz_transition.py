@@ -19,11 +19,11 @@ class TimeZoneTransition:
         self._time_type_indices = time_type_indices
         self._transition_index = transition_index
         self._time_type_info = time_type_infos[time_type_indices[transition_index]]
-        self._wall_standard_flag = WallStandardFlag(
+        self.wall_standard_flag = WallStandardFlag(
             wall_standard_flags[time_type_indices[transition_index]]
         )
-        self._is_utc = bool(is_utc_flags[time_type_indices[transition_index]])
-        self._abbreviation = timezone_abbrevs[
+        self.is_utc = bool(is_utc_flags[time_type_indices[transition_index]])
+        self.abbreviation = timezone_abbrevs[
             self._time_type_info.abbrev_index :
         ].partition("\x00")[0]
 
@@ -50,10 +50,6 @@ class TimeZoneTransition:
     @property
     def transition_time_utc(self) -> datetime:
         return self._transition_time.replace(tzinfo=timezone.utc)
-
-    @property
-    def abbreviation(self) -> str:
-        return self._abbreviation
 
     @property
     def dst_offset_secs(self) -> int:
@@ -89,11 +85,3 @@ class TimeZoneTransition:
     @property
     def is_dst(self) -> bool:
         return self._time_type_info.is_dst
-
-    @property
-    def wall_standard_flag(self) -> WallStandardFlag:
-        return self._wall_standard_flag
-
-    @property
-    def is_utc(self) -> bool:
-        return self._is_utc
