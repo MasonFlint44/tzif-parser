@@ -3,6 +3,7 @@ from datetime import datetime
 
 import pytest
 
+from my_zoneinfo._tzpath import available_timezones
 from my_zoneinfo.zoneinfo import ZoneInfo
 from tzif_parser import TimeZoneInfo
 
@@ -111,3 +112,31 @@ def test_read(
     assert len(tz_info.body.timezone_abbrevs) == abbrevs_count
 
     assert len(tz_info.body.leap_second_transitions) == leap_seconds_count
+
+
+def test_read_all():
+    timezones = available_timezones()
+
+    for timezone in timezones:
+        tz_info = TimeZoneInfo.read(timezone)
+
+        assert tz_info.timezone_name == timezone
+        assert tz_info.filepath == os.path.join(
+            "/usr/share/zoneinfo", *timezone.split("/")
+        )
+        assert tz_info.version >= 2
+
+        assert len(tz_info.body.transition_times) == tz_info.header.transitions_count
+        assert len(tz_info.body.time_type_indices) == tz_info.header.transitions_count
+        assert len(tz_info.body.transitions) == tz_info.header.transitions_count
+
+        assert len(tz_info.body.time_type_infos) == tz_info.header.local_time_type_count
+        assert (
+            len(tz_info.body.wall_standard_flags)
+            == tz_info.header.wall_standard_flag_count
+        )
+        assert len(tz_info.body.is_utc_flags) == tz_info.header.is_utc_flag_count
+
+        assert len(tz_info.body.timezone_abbrevs) >= 1
+
+        assert len(tz_info.body.leap_second_transitions) == 0

@@ -19,10 +19,16 @@ class TimeZoneTransition:
         self._time_type_indices = time_type_indices
         self._transition_index = transition_index
         self._time_type_info = time_type_infos[time_type_indices[transition_index]]
-        self.wall_standard_flag = WallStandardFlag(
-            wall_standard_flags[time_type_indices[transition_index]]
+        self.wall_standard_flag = (
+            WallStandardFlag(wall_standard_flags[time_type_indices[transition_index]])
+            if len(wall_standard_flags) > 0
+            else None
         )
-        self.is_utc = bool(is_utc_flags[time_type_indices[transition_index]])
+        self.is_utc = (
+            bool(is_utc_flags[time_type_indices[transition_index]])
+            if len(is_utc_flags) > 0
+            else None
+        )
         self.abbreviation = timezone_abbrevs[
             self._time_type_info.abbrev_index :
         ].partition("\x00")[0]
