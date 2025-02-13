@@ -99,10 +99,15 @@ Represents the POSIX time zone information.
 
 - `posix_string`: The POSIX time zone string.
 - `standard_abbrev`: The standard time abbreviation.
+- `utc_offset_secs`: The UTC offset in seconds.
 - `utc_offset_hours`: The UTC offset in hours.
 - `dst_abbrev`: The daylight saving time abbreviation.
+- `dst_offset_secs`: The DST offset in seconds.
+- `dst_offset_hours`: The DST offset in hours.
 - `dst_start`: The start of daylight saving time.
 - `dst_end`: The end of daylight saving time.
+- `dst_difference_secs`: The difference between DST and standard time in seconds.
+- `dst_difference_hours`: The difference between DST and standard time in hours.
 
 ## Contributing
 
