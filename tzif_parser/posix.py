@@ -75,7 +75,21 @@ class PosixTzInfo:
 
     @property
     def dst_offset_hours(self) -> float | None:
-        return self.dst_offset_secs / 3600 if self.dst_offset_secs is not None else None
+        if self.dst_offset_secs is None:
+            return None
+        return self.dst_offset_secs / 3600
+
+    @property
+    def dst_difference_secs(self) -> int | None:
+        if self.dst_offset_secs is None:
+            return None
+        return self.dst_offset_secs - self.utc_offset_secs
+
+    @property
+    def dst_difference_hours(self) -> float | None:
+        if self.dst_difference_secs is None:
+            return None
+        return self.dst_difference_secs / 3600
 
     @classmethod
     def read(cls, file: IO[bytes]) -> "PosixTzInfo":
