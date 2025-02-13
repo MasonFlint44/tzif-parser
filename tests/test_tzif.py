@@ -13,64 +13,64 @@ def test_read_invalid_timezone():
         TimeZoneInfo.read("Invalid/Timezone")
 
 
-@pytest.mark.parametrize(
-    "timezone_name",
-    [
-        "America/New_York",
-        "America/Chicago",
-        "America/Denver",
-        "America/Los_Angeles",
-    ],
-)
-def test_read_transitions(timezone_name):
-    tz_info = TimeZoneInfo.read(timezone_name)
-    zoneinfo = ZoneInfo(timezone_name)
+def test_read_transitions():
+    timezones = available_timezones()
 
-    # Build a list of UTC transitions from tz_info
-    # Remove the timezone info from the transition times to compare with zoneinfo
-    tz_info_utc_transitions = [
-        transitition.transition_time_utc.replace(tzinfo=None)
-        for transitition in tz_info.body.transitions
-    ]
-    # Build a list of UTC transitions from zoneinfo
-    # Convert the timestamps to datetime objects
-    zoneinfo_utc_transitions = [
-        datetime.fromtimestamp(transition) for transition in zoneinfo._trans_utc
-    ]
-    # Compare the UTC transitions from tz_info and zoneinfo
-    assert tz_info_utc_transitions == zoneinfo_utc_transitions
+    for timezone in timezones:
+        tz_info = TimeZoneInfo.read(timezone)
+        zoneinfo = ZoneInfo(timezone)
 
-    # Build a list of local transitions from tz_info
-    # Remove the timezone info from the transition times to compare with zoneinfo
-    tz_info_local_wall_transitions = [
-        transitition.transition_time_local_wall.replace(tzinfo=None)
-        for transitition in tz_info.body.transitions
-    ]
-    tz_info_local_standard_transitions = [
-        transitition.transition_time_local_standard.replace(tzinfo=None)
-        for transitition in tz_info.body.transitions
-    ]
-    # Combine the wall and standard transitions
-    tz_info_local_transitions = list(
-        zip(tz_info_local_wall_transitions, tz_info_local_standard_transitions)
-    )
-    # Sort the transitions in reverse order to compare with zoneinfo
-    tz_info_local_transitions = [
-        sorted([wall, standard], reverse=True)
-        for wall, standard in tz_info_local_transitions
-    ]
-    # Build a list of local transitions from zoneinfo
-    # Convert the timestamps to datetime objects
-    zoneinfo_local_transitions = [
-        [datetime.fromtimestamp(transition) for transition in zoneinfo._trans_local[0]],
-        [datetime.fromtimestamp(transition) for transition in zoneinfo._trans_local[1]],
-    ]
-    # Zip the transitions for comparison with tz_info
-    zoneinfo_local_transitions = list(zip(*zoneinfo_local_transitions))
+        # Build a list of UTC transitions from tz_info
+        # Remove the timezone info from the transition times to compare with zoneinfo
+        tz_info_utc_transitions = [
+            transitition.transition_time_utc.replace(tzinfo=None)
+            for transitition in tz_info.body.transitions
+        ]
+        # Build a list of UTC transitions from zoneinfo
+        # Convert the timestamps to datetime objects
+        zoneinfo_utc_transitions = [
+            datetime.fromtimestamp(transition) for transition in zoneinfo._trans_utc
+        ]
+        # Compare the UTC transitions from tz_info and zoneinfo
+        assert tz_info_utc_transitions == zoneinfo_utc_transitions
 
-    # Compare the local transitions from tz_info and zoneinfo
-    for i, transitions in enumerate(zoneinfo_local_transitions):
-        assert tz_info_local_transitions[i] == list(transitions)
+        # Build a list of local transitions from tz_info
+        # Remove the timezone info from the transition times to compare with zoneinfo
+        tz_info_local_wall_transitions = [
+            transitition.transition_time_local_wall.replace(tzinfo=None)
+            for transitition in tz_info.body.transitions
+        ]
+        tz_info_local_standard_transitions = [
+            transitition.transition_time_local_standard.replace(tzinfo=None)
+            for transitition in tz_info.body.transitions
+        ]
+        # Combine the wall and standard transitions
+        tz_info_local_transitions = list(
+            zip(tz_info_local_wall_transitions, tz_info_local_standard_transitions)
+        )
+        # Sort the transitions in reverse order to compare with zoneinfo
+        tz_info_local_transitions = [
+            sorted([wall, standard], reverse=True)
+            for wall, standard in tz_info_local_transitions
+        ]
+        # Build a list of local transitions from zoneinfo
+        # Convert the timestamps to datetime objects
+        zoneinfo_local_transitions = [
+            [
+                datetime.fromtimestamp(transition)
+                for transition in zoneinfo._trans_local[0]
+            ],
+            [
+                datetime.fromtimestamp(transition)
+                for transition in zoneinfo._trans_local[1]
+            ],
+        ]
+        # Zip the transitions for comparison with tz_info
+        zoneinfo_local_transitions = list(zip(*zoneinfo_local_transitions))
+
+        # Compare the local transitions from tz_info and zoneinfo
+        for i, transitions in enumerate(zoneinfo_local_transitions):
+            assert tz_info_local_transitions[i] == list(transitions)
 
 
 @pytest.mark.parametrize(
