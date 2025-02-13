@@ -33,7 +33,7 @@ print(tz_info.footer)
 
 ## Classes
 
-### `TimeZoneInfo`
+### TimeZoneInfo
 
 Represents the time zone information parsed from a TZif file.
 
@@ -44,7 +44,7 @@ Represents the time zone information parsed from a TZif file.
 - `body`: The body data of the TZif file.
 - `footer`: The POSIX time zone information.
 
-### `TimeZoneInfoHeader`
+### TimeZoneInfoHeader
 
 Represents the header data of a TZif file.
 
@@ -58,7 +58,7 @@ Represents the header data of a TZif file.
 - `local_time_type_count`: The number of local time types.
 - `timezone_abbrev_byte_count`: The number of bytes used for time zone abbreviations.
 
-### `TimeZoneInfoBody`
+### TimeZoneInfoBody
 
 Represents the body data of a TZif file.
 
@@ -73,7 +73,7 @@ Represents the body data of a TZif file.
 - `is_utc_flags`: The list of UTC/local flags.
 - `transitions`: The list of time zone transitions.
 
-### `TimeZoneTransition`
+### TimeZoneTransition
 
 Represents a single time zone transition.
 
@@ -91,7 +91,7 @@ Represents a single time zone transition.
 - `wall_standard_flag`: The wall/standard flag.
 - `is_utc`: Whether the transition time is in UTC.
 
-### `PosixTzInfo`
+### PosixTzInfo
 
 Represents the POSIX time zone information.
 
