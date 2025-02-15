@@ -21,6 +21,7 @@ pip install tzif-parser
 Here's an example of how to use `tzif-parser` to read a TZif file and extract time zone information:
 
 ```python
+from datetime import datetime
 from tzif_parser import TimeZoneInfo
 
 tz_info = TimeZoneInfo.read("America/New_York")
@@ -29,6 +30,8 @@ print(tz_info)
 print(tz_info.header)
 print(tz_info.body)
 print(tz_info.footer)
+
+current_transition = tz_info.body.find_transition(datetime.now())
 ```
 
 ## Classes
@@ -85,8 +88,8 @@ Represents a single time zone transition.
 - `abbreviation`: The time zone abbreviation.
 - `utc_offset_secs`: The UTC offset in seconds.
 - `utc_offset_hours`: The UTC offset in hours.
-- `dst_offset_secs`: The DST offset in seconds.
-- `dst_offset_hours`: The DST offset in hours.
+- `dst_difference_secs`: The DST component of the offset in seconds.
+- `dst_difference_hours`: The DST component of the offset in hours.
 - `is_dst`: Whether the transition is during daylight saving time.
 - `wall_standard_flag`: Metadata specifying whether the transition was originally provided in standard or wall time.
 - `is_utc`: Metadata specifying whether the transition was originally provided in UTC or local time.

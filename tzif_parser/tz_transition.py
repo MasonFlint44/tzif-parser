@@ -58,7 +58,7 @@ class TimeZoneTransition:
         return self._transition_time.replace(tzinfo=timezone.utc)
 
     @property
-    def dst_offset_secs(self) -> int:
+    def dst_difference_secs(self) -> int:
         if not self.is_dst:
             return 0
         # Get the ttinfo for the previous transition
@@ -77,8 +77,8 @@ class TimeZoneTransition:
         return 3600
 
     @property
-    def dst_offset_hours(self) -> float:
-        return self.dst_offset_secs / 3600
+    def dst_difference_hours(self) -> float:
+        return self.dst_difference_secs / 3600
 
     @property
     def utc_offset_secs(self) -> int:
