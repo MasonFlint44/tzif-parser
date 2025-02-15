@@ -1,5 +1,7 @@
 # tzif-parser
 
+[![Upload Python Package](https://github.com/MasonFlint44/tzif-parser/actions/workflows/python-publish.yml/badge.svg)](https://github.com/MasonFlint44/tzif-parser/actions/workflows/python-publish.yml)
+
 `tzif-parser` is a Python library for parsing and handling Time Zone Information Format (TZif) files. These files are used to store time zone information, including transitions, UTC offsets, and daylight saving time information.
 
 ## Features
