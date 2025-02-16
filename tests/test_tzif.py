@@ -1,9 +1,9 @@
 import os
 from datetime import datetime
+from zoneinfo import available_timezones
 
 import pytest
 
-from my_zoneinfo._tzpath import available_timezones
 from my_zoneinfo.zoneinfo import ZoneInfo
 from tzif_parser import TimeZoneInfo
 
