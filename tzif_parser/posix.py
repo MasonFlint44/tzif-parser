@@ -4,16 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import IO
 
-posix_weekdays_to_python = {
-    0: 6,
-    1: 0,
-    2: 1,
-    3: 2,
-    4: 3,
-    5: 4,
-    6: 5,
-}
-_calendar = Calendar()
+_calendar = Calendar(firstweekday=6)
 
 
 @dataclass
@@ -44,11 +35,17 @@ class PosixTzDateTime:
     second: int
 
     def to_datetime(self, year: int) -> datetime:
-        weeks = _calendar.monthdays2calendar(year, self.month)
-        week = weeks[self.week - 1 if self.week < 5 else -1]
-        day = next(
-            day for day in week if day[1] == posix_weekdays_to_python[self.weekday]
-        )
+        days = [
+            day for day in _calendar.itermonthdays2(year, self.month) if day[0] != 0
+        ]
+        weeks = [days[i : i + 7] for i in range(0, len(days), 7)]
+        last_week = days[-7:]
+        week = weeks[self.week - 1] if self.week < 5 else last_week
+        # Find the day in the week that matches the weekday.
+        # The weekday must be converted from POSIX to Python.
+        # In POSIX, Sunday is 0, but in Python, Monday is 0.
+        day = next(day for day in week if day[1] == (self.weekday - 1) % 7)
+
         return datetime(
             year,
             self.month,
