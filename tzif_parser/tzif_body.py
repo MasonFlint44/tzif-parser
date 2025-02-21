@@ -28,10 +28,7 @@ class TimeZoneInfoBody:
         self._timezone_abbrevs = timezone_abbrevs
         self.wall_standard_flags = wall_standard_flags
         self.is_utc_flags = is_utc_flags
-
-    @property
-    def transitions(self) -> list[TimeZoneTransition]:
-        return [
+        self.transitions = [
             TimeZoneTransition(
                 transition_time,
                 self.time_type_infos,
@@ -50,8 +47,10 @@ class TimeZoneInfoBody:
 
     def find_transition(self, dt: datetime) -> TimeZoneTransition:
         # Find the index of the transition time that is less than or equal to the given datetime
-        index = bisect.bisect_right(self.transition_times, dt) - 1
-        return self.transitions[index]
+        index = bisect.bisect_right(self.transition_times, dt)
+        if index == 0:
+            return self.transitions[0]
+        return self.transitions[index - 1]
 
     @classmethod
     def read(

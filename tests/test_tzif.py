@@ -1,11 +1,27 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import available_timezones
 
 import pytest
 
 from my_zoneinfo.zoneinfo import ZoneInfo
 from tzif_parser import TimeZoneInfo
+
+
+@pytest.mark.parametrize(
+    "utc_time, expected_offset",
+    [
+        (datetime(1800, 1, 1, 0, 0, 0), -17762),
+        (datetime(2025, 1, 5, 0, 0, 0), -18000),
+        (datetime(2025, 6, 2, 0, 0, 0), -14400),
+        (datetime(2039, 1, 5, 0, 0, 0), -18000),
+        (datetime(2039, 6, 2, 0, 0, 0), -14400),
+    ],
+)
+def test_utc_to_local(utc_time, expected_offset):
+    tz_info = TimeZoneInfo.read("America/New_York")
+    local_time = tz_info.utc_to_local(utc_time)
+    assert utc_time + timedelta(seconds=expected_offset) == local_time
 
 
 def test_read_invalid_timezone():

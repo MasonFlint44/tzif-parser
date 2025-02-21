@@ -1,4 +1,5 @@
 import os.path
+from datetime import datetime, timedelta
 
 from .posix import PosixTzInfo
 from .tzif_body import TimeZoneInfoBody
@@ -53,6 +54,37 @@ class TimeZoneInfo:
         if self._posix_tz_info is None:
             raise ValueError("No footer data available")
         return self._posix_tz_info
+
+    def utc_to_local(self, dt) -> datetime:
+        # Find the transition that is less than or equal to the given datetime
+        transition = self.body.find_transition(dt)
+        if transition == self.body.transitions[
+            0
+        ] and dt < transition.transition_time_utc.replace(tzinfo=None):
+            # If the datetime is before the first transition, use the first ttinfo
+            ttinfo = self.body.time_type_infos[0]
+            utc_offset_secs = ttinfo.utc_offset_secs
+        elif transition == self.body.transitions[
+            -1
+        ] and dt > transition.transition_time_utc.replace(tzinfo=None):
+            # If the datetime is after the last transition, use the POSIX TZ info footer
+            if self.footer.dst_start is None or self.footer.dst_end is None:
+                # If the footer does not have DST start and end times, use the standard offset
+                utc_offset_secs = self.footer.utc_offset_secs
+            elif (
+                self.footer.dst_start.to_datetime(dt.year)
+                < dt
+                < self.footer.dst_end.to_datetime(dt.year)
+            ) and self.footer.dst_offset_secs is not None:
+                # If the datetime is during DST, use the DST offset
+                utc_offset_secs = self.footer.dst_offset_secs
+            else:
+                # Otherwise, use the standard offset
+                utc_offset_secs = self.footer.utc_offset_secs
+        else:
+            # Otherwise, use the offset from the transition
+            utc_offset_secs = transition.utc_offset_secs
+        return dt + timedelta(seconds=utc_offset_secs)
 
     @classmethod
     def read(cls, timezone_name: str):
