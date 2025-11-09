@@ -45,6 +45,11 @@ class TimeZoneInfoBody:
     def timezone_abbrevs(self) -> list[str]:
         return self._timezone_abbrevs.rstrip("\x00").split("\x00")
 
+    def get_abbrev_by_index(self, index: int) -> str:
+        if index < 0 or index >= len(self._timezone_abbrevs):
+            raise IndexError("Index out of range")
+        return self._timezone_abbrevs[index:].partition("\x00")[0]
+
     def find_transition(self, dt: datetime) -> TimeZoneTransition:
         # Find the index of the transition time that is less than or equal to the given datetime
         dt = (
