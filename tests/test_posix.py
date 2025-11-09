@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from datetime import datetime
 
 import pytest
@@ -47,11 +48,6 @@ def test_posix_tz_datetime_to_datetime_more(posix_dt, year, expected):
     assert posix_dt.to_datetime(year) == expected
 
 
-# -------------------------
-# J<n> (Julian without Feb 29) semantics
-# -------------------------
-
-
 @pytest.mark.parametrize(
     "j, year, expected",
     [
@@ -79,11 +75,6 @@ def test_posix_julian_datetime(j, year, expected):
     assert j.to_datetime(year) == expected
 
 
-# -------------------------
-# Plain ordinal <n> (0..365, includes Feb 29)
-# -------------------------
-
-
 @pytest.mark.parametrize(
     "o, year, expected",
     [
@@ -98,11 +89,6 @@ def test_posix_julian_datetime(j, year, expected):
 )
 def test_posix_ordinal_datetime(o, year, expected):
     assert o.to_datetime(year) == expected
-
-
-# -------------------------
-# Transition time parsing (± and up to 167 hours)
-# -------------------------
 
 
 @pytest.mark.parametrize(
@@ -128,11 +114,6 @@ def test_read_dst_transition_time_invalid(bad):
         PosixTzInfo._read_dst_transition_time(bad)
 
 
-# -------------------------
-# Offset parsing (POSIX sign rules)
-# -------------------------
-
-
 @pytest.mark.parametrize(
     "offset_str, seconds",
     [
@@ -153,11 +134,6 @@ def test_read_offset_invalid(bad):
         PosixTzInfo._read_offset(bad)
 
 
-# -------------------------
-# Date form parser: M / J / <n>
-# -------------------------
-
-
 @pytest.mark.parametrize(
     "expr, expected_type, expected_tuple",
     [
@@ -171,9 +147,11 @@ def test_read_dst_transition_datetime(expr, expected_type, expected_tuple):
     obj = PosixTzInfo._read_dst_transition_datetime(expr)
     if expected_type is type(None):
         assert obj is None
-    else:
+    elif obj is not None:
         assert isinstance(obj, expected_type)
-        assert tuple(obj.__dict__.values()) == expected_tuple
+        assert tuple(asdict(obj).values()) == expected_tuple
+    else:
+        pytest.fail("Expected non-None object")
 
 
 @pytest.mark.parametrize(

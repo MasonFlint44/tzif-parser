@@ -1,5 +1,21 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+
+
+@dataclass(frozen=True)
+class TimeZoneResolution:
+    """
+    Resolution of a timezone at a specific instant.
+    """
+
+    timezone_name: str
+    resolution_time: datetime  # tz-aware UTC
+    local_time: datetime  # naive local wall time
+    utc_offset_secs: int
+    is_dst: bool
+    abbreviation: str | None
+    dst_difference_secs: int
 
 
 class WallStandardFlag(Enum):

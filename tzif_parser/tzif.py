@@ -1,6 +1,7 @@
 import os.path
 from datetime import datetime, timedelta, timezone
 
+from .models import TimeZoneResolution
 from .posix import PosixTzInfo
 from .tzif_body import TimeZoneInfoBody
 from .tzif_header import TimeZoneInfoHeader
@@ -55,13 +56,13 @@ class TimeZoneInfo:
             raise ValueError("No footer data available")
         return self._posix_tz_info
 
-    def utc_to_local(self, dt: datetime) -> datetime:
+    def resolve(self, dt: datetime) -> TimeZoneResolution:
         """
-        Convert a UTC datetime to *naive* local wall time according to TZif data.
-        - Accepts naive or aware datetimes. Naive is interpreted as UTC.
-        - Returns a naive local datetime (no tzinfo), by design.
+        Resolve this timezone at a given instant.
+        Accepts naive (interpreted as UTC) or aware (converted to UTC).
+        Returns a TimeZoneResolution with tz-aware UTC `resolution_time`
+        and naive local wall `local_time`.
         """
-        # Normalize to aware UTC
         dt_utc = (
             dt.replace(tzinfo=timezone.utc)
             if dt.tzinfo is None
@@ -70,66 +71,106 @@ class TimeZoneInfo:
 
         body = self.body
 
-        # 0) No transitions at all => single ttinfo applies
+        # Case 0: No transitions at all => single ttinfo applies
         if not body.transitions:
-            ttinfo = body.time_type_infos[0]
-            return (dt_utc + timedelta(seconds=ttinfo.utc_offset_secs)).replace(
-                tzinfo=None
+            tt = body.time_type_infos[0]
+            std = next((x for x in body.time_type_infos if not x.is_dst), None)
+            delta = (
+                (tt.utc_offset_secs - std.utc_offset_secs) if (tt.is_dst and std) else 0
+            )
+            off = tt.utc_offset_secs
+            abbr = body.get_abbrev_by_index(tt.abbrev_index)
+            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+            return TimeZoneResolution(
+                self.timezone_name, dt_utc, local, off, tt.is_dst, abbr, delta
             )
 
         first = body.transitions[0]
         last = body.transitions[-1]
 
-        # 1) Before first transition: prefer a non-DST ttinfo if present
+        # Case 1: Before first transition
         if dt_utc < first.transition_time_utc:
-            pre_tt = next(
-                (tti for tti in body.time_type_infos if not tti.is_dst),
+            tt = next(
+                (x for x in body.time_type_infos if not x.is_dst),
                 body.time_type_infos[0],
             )
-            return (dt_utc + timedelta(seconds=pre_tt.utc_offset_secs)).replace(
-                tzinfo=None
+            std = next((x for x in body.time_type_infos if not x.is_dst), None)
+            delta = (
+                (tt.utc_offset_secs - std.utc_offset_secs) if (tt.is_dst and std) else 0
+            )
+            off = tt.utc_offset_secs
+            abbr = body.get_abbrev_by_index(tt.abbrev_index)
+            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+            return TimeZoneResolution(
+                self.timezone_name, dt_utc, local, off, tt.is_dst, abbr, delta
             )
 
-        # 2) Between transitions: use the transition's time type
+        # Case 2: Between transitions
         if dt_utc <= last.transition_time_utc:
             tr = body.find_transition(dt_utc)
-            return (dt_utc + timedelta(seconds=tr.utc_offset_secs)).replace(tzinfo=None)
-
-        # 3) After the last transition: apply POSIX footer rules if available
-        if self._posix_tz_info is not None:
-            footer = self.footer
-            std_offset = footer.utc_offset_secs
-
-            # POSIX rules compare in *naive local wall time*
-            local_std_naive = (dt_utc + timedelta(seconds=std_offset)).replace(
-                tzinfo=None
+            abbr = tr.abbreviation
+            off = tr.utc_offset_secs
+            delta = tr.dst_difference_secs if tr.is_dst else 0
+            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+            return TimeZoneResolution(
+                self.timezone_name, dt_utc, local, off, tr.is_dst, abbr, delta
             )
 
+        # Case 3: After the last transition, use POSIX footer if present
+        if self._posix_tz_info is not None:
+            f = self.footer
+            std = f.utc_offset_secs
+
+            # POSIX rules compare using *naive local wall time*
+            local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
             in_dst = False
-            if footer.dst_start is not None and footer.dst_end is not None:
-                start = footer.dst_start.to_datetime(local_std_naive.year)
-                end = footer.dst_end.to_datetime(local_std_naive.year)
-
+            if f.dst_start is not None and f.dst_end is not None:
+                start = f.dst_start.to_datetime(local_std.year)
+                end = f.dst_end.to_datetime(local_std.year)
                 if start < end:
-                    in_dst = (local_std_naive >= start) and (local_std_naive < end)
+                    in_dst = start <= local_std < end
                 else:
-                    # Southern hemisphere (wraps new year)
-                    in_dst = (local_std_naive >= start) or (local_std_naive < end)
+                    # wrap over new year (southern hemisphere rule)
+                    in_dst = (local_std >= start) or (local_std < end)
 
-            # Default to +1h if footer has rules but no explicit dst offset
             if in_dst:
-                offset_secs = (
-                    footer.dst_offset_secs
-                    if footer.dst_offset_secs is not None
-                    else std_offset + 3600
-                )
+                off = f.dst_offset_secs if f.dst_offset_secs is not None else std + 3600
+                delta = (off - std) if f.dst_offset_secs is not None else 3600
+                abbr = f.dst_abbrev or f.standard_abbrev
             else:
-                offset_secs = std_offset
+                off = std
+                delta = 0
+                abbr = f.standard_abbrev
 
-            return (dt_utc + timedelta(seconds=offset_secs)).replace(tzinfo=None)
+            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+            return TimeZoneResolution(
+                self.timezone_name, dt_utc, local, off, in_dst, abbr, delta
+            )
 
-        # 4) Fallback: no footer; use last known offset
-        return (dt_utc + timedelta(seconds=last.utc_offset_secs)).replace(tzinfo=None)
+        # Case 4: No footer; stick to the last known offset
+        abbr = last.abbreviation
+        off = last.utc_offset_secs
+        delta = last.dst_difference_secs if last.is_dst else 0
+        local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+        return TimeZoneResolution(
+            self.timezone_name, dt_utc, local, off, last.is_dst, abbr, delta
+        )
+
+    def local(self, dt: datetime) -> datetime:
+        """Naive local wall time at `dt`."""
+        return self.resolve(dt).local_time
+
+    def is_dst(self, dt: datetime) -> bool:
+        return self.resolve(dt).is_dst
+
+    def utc_offset_secs(self, dt: datetime) -> int:
+        return self.resolve(dt).utc_offset_secs
+
+    def dst_difference_secs(self, dt: datetime) -> int:
+        return self.resolve(dt).dst_difference_secs
+
+    def abbreviation(self, dt: datetime) -> str | None:
+        return self.resolve(dt).abbreviation
 
     @classmethod
     def read(cls, timezone_name: str):
