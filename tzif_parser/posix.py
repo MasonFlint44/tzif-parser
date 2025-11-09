@@ -180,12 +180,27 @@ class PosixTzInfo:
         offset_match = offset_parser.fullmatch(posix_offset)
         if offset_match is None:
             raise ValueError(f"{posix_offset} is not a valid offset")
+
         h, m, s = (int(v or 0) for v in offset_match.group("h", "m", "s"))
-        total = h * 3600 + m * 60 + s
+
+        # POSIX constraints:
+        # - hours 0..24 (not >24)
+        # - minutes/seconds 0..59
+        # - if hours == 24, then minutes == seconds == 0
         if h > 24:
             raise ValueError(f"Offset hours must be in [0, 24]: {posix_offset}")
+        if not (0 <= m < 60 and 0 <= s < 60):
+            raise ValueError(
+                f"Offset minutes/seconds must be in [0, 59]: {posix_offset}"
+            )
+        if h == 24 and (m != 0 or s != 0):
+            raise ValueError(f"24-hour offsets must be 24:00[:00]: {posix_offset}")
+
+        total = h * 3600 + m * 60 + s
+        # POSIX sign convention: positive means WEST of UTC => negative seconds
         if offset_match.group("sign") != "-":
             total = -total
+
         return total
 
     @classmethod
@@ -236,8 +251,11 @@ class PosixTzInfo:
 
         h, m, s = (int(v or 0) for v in match.group("h", "m", "s"))
 
+        # bounds: hours 0..167, minutes/seconds 0..59
         if h > 167:
             raise ValueError(f"Hour must be in [0, 167]: {time_str}")
+        if not (0 <= m < 60 and 0 <= s < 60):
+            raise ValueError(f"Minutes/seconds must be in [0, 59]: {time_str}")
 
         if match.group("sign") == "-":
             h, m, s = -h, -m, -s
