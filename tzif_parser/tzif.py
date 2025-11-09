@@ -1,5 +1,6 @@
 import os.path
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 from .models import TimeZoneResolution
 from .posix import PosixTzInfo
@@ -56,6 +57,7 @@ class TimeZoneInfo:
             raise ValueError("No footer data available")
         return self._posix_tz_info
 
+    @lru_cache(maxsize=1)
     def resolve(self, dt: datetime) -> TimeZoneResolution:
         """
         Resolve this timezone at a given instant.
