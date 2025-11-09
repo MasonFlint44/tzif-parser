@@ -1,10 +1,7 @@
 import re
-from calendar import Calendar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import IO
-
-_calendar = Calendar(firstweekday=6)
 
 
 @dataclass
@@ -14,45 +11,73 @@ class PosixTzJulianDateTime:
     minute: int
     second: int
 
+    def _is_leap_year(self, year: int) -> bool:
+        return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
     def to_datetime(self, year: int) -> datetime:
-        return datetime(
-            year,
-            1,
-            1,
-            self.hour,
-            self.minute,
-            self.second,
-        ) + timedelta(days=self.day_of_year - 1)
+        # Jn excludes Feb 29. On leap years, days >= 60 are shifted by +1.
+        base = datetime(year, 1, 1)
+        day_index = self.day_of_year - 1
+        if self._is_leap_year(year) and self.day_of_year >= 60:
+            day_index += 1
+        return base + timedelta(
+            days=day_index, hours=self.hour, minutes=self.minute, seconds=self.second
+        )
 
 
 @dataclass
-class PosixTzDateTime:
-    month: int
-    week: int
-    weekday: int
+class PosixTzOrdinalDateTime:
+    day_index: int  # 0..365 (includes Feb 29)
     hour: int
     minute: int
     second: int
 
     def to_datetime(self, year: int) -> datetime:
-        days = [
-            day for day in _calendar.itermonthdays2(year, self.month) if day[0] != 0
-        ]
-        weeks = [days[i : i + 7] for i in range(0, len(days), 7)]
-        last_week = days[-7:]
-        week = weeks[self.week - 1] if self.week < 5 else last_week
-        # Find the day in the week that matches the weekday.
-        # The weekday must be converted from POSIX to Python.
-        # In POSIX, Sunday is 0, but in Python, Monday is 0.
-        day = next(day for day in week if day[1] == (self.weekday - 1) % 7)
+        base = datetime(year, 1, 1)
+        return base + timedelta(
+            days=self.day_index,
+            hours=self.hour,
+            minutes=self.minute,
+            seconds=self.second,
+        )
 
-        return datetime(
-            year,
-            self.month,
-            day[0],
-            self.hour,
-            self.minute,
-            self.second,
+
+@dataclass
+class PosixTzDateTime:
+    month: int
+    week: int  # 1..5 (5 = last)
+    weekday: int  # POSIX: Sunday=0 ... Saturday=6
+    hour: int
+    minute: int
+    second: int
+
+    def to_datetime(self, year: int) -> datetime:
+        # Convert POSIX weekday (Sun=0..Sat=6) to Python weekday (Mon=0..Sun=6)
+        py_weekday = (self.weekday - 1) % 7  # Sun(0)->6, Mon(1)->0, ... Sat(6)->5
+
+        # 1) Find first occurrence of py_weekday on/after the 1st of the month
+        first_of_month = datetime(year, self.month, 1)
+        first_wd = first_of_month.weekday()  # Mon=0..Sun=6
+        delta = (py_weekday - first_wd) % 7
+        first_occurrence = first_of_month + timedelta(days=delta)
+
+        if self.week < 5:
+            # 2) w-th occurrence (1-based): add 7*(w-1) days
+            target = first_occurrence + timedelta(days=7 * (self.week - 1))
+        else:
+            # 3) Last occurrence: step to next month, back up to the last py_weekday
+            if self.month == 12:
+                next_month_first = datetime(year + 1, 1, 1)
+            else:
+                next_month_first = datetime(year, self.month + 1, 1)
+            # last day of month
+            last_of_month = next_month_first - timedelta(days=1)
+            last_wd = last_of_month.weekday()
+            back = (last_wd - py_weekday) % 7
+            target = last_of_month - timedelta(days=back)
+
+        return target.replace(
+            hour=self.hour, minute=self.minute, second=self.second, microsecond=0
         )
 
 
@@ -63,8 +88,8 @@ class PosixTzInfo:
     utc_offset_secs: int
     dst_abbrev: str | None
     dst_offset_secs: int | None
-    dst_start: PosixTzDateTime | PosixTzJulianDateTime | None
-    dst_end: PosixTzDateTime | PosixTzJulianDateTime | None
+    dst_start: PosixTzDateTime | PosixTzJulianDateTime | PosixTzOrdinalDateTime | None
+    dst_end: PosixTzDateTime | PosixTzJulianDateTime | PosixTzOrdinalDateTime | None
 
     @property
     def utc_offset_hours(self) -> float:
@@ -118,6 +143,8 @@ class PosixTzInfo:
 
         standard_abbrev = local_tz_match.group("std").strip("<>")
         utc_offset = local_tz_match.group("stdoff")
+        if utc_offset is None:
+            raise ValueError(f"{local_tz!r} is missing required standard offset")
         utc_offset_secs = cls._read_offset(utc_offset)
         dst_abbrev = local_tz_match.group("dst")
         if dst_abbrev:
@@ -164,29 +191,36 @@ class PosixTzInfo:
     @classmethod
     def _read_dst_transition_datetime(
         cls, posix_datetime: str
-    ) -> PosixTzDateTime | PosixTzJulianDateTime | None:
-        # Adapted from zoneinfo._zoneinfo._parse_dst_start_end
+    ) -> PosixTzDateTime | PosixTzJulianDateTime | PosixTzOrdinalDateTime | None:
         date, *time = posix_datetime.split("/", 1)
-        type_ = date[:1]
-        if type_ == "M":
-            datetime_parser = re.compile(r"M(\d{1,2})\.(\d).(\d)", re.ASCII)
-            datetime_match = datetime_parser.fullmatch(date)
-            if datetime_match is None:
+        t = time[0] if time else None
+        trans_time = cls._read_dst_transition_time(t) if t else (2, 0, 0)
+
+        if not date:
+            return None
+
+        if date.startswith("M"):
+            m = re.fullmatch(r"M(\d{1,2})\.(\d)\.(\d)", date)
+            if m is None:
                 raise ValueError(f"Invalid dst start/end date: {posix_datetime}")
-            date_offset = tuple(map(int, datetime_match.groups()))
-            transition_time = (
-                cls._read_dst_transition_time(time[0]) if len(time) > 0 else (2, 0, 0)
-            )
-            return PosixTzDateTime(
-                date_offset[0], date_offset[1], date_offset[2], *transition_time
-            )
-        if type_ == "J":
-            date = date[1:]
-            day_of_year = int(date)
-            transition_time = (
-                cls._read_dst_transition_time(time[0]) if len(time) > 0 else (2, 0, 0)
-            )
-            return PosixTzJulianDateTime(day_of_year, *transition_time)
+            month, week, weekday = (int(x) for x in m.groups())
+            if not (1 <= month <= 12 and 1 <= week <= 5 and 0 <= weekday <= 6):
+                raise ValueError(f"Invalid M<m>.<w>.<d>: {posix_datetime}")
+            return PosixTzDateTime(month, week, weekday, *trans_time)
+
+        if date.startswith("J"):
+            n = int(date[1:])
+            if not (1 <= n <= 365):
+                raise ValueError(f"J<n> must be 1..365: {posix_datetime}")
+            return PosixTzJulianDateTime(n, *trans_time)
+
+        # Plain numeric day-of-year (0..365), includes Feb 29
+        if date.isdigit():
+            n = int(date)
+            if not (0 <= n <= 365):
+                raise ValueError(f"<n> must be 0..365: {posix_datetime}")
+            return PosixTzOrdinalDateTime(n, *trans_time)
+
         return None
 
     @classmethod

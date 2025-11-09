@@ -1,5 +1,5 @@
 import os.path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .posix import PosixTzInfo
 from .tzif_body import TimeZoneInfoBody
@@ -55,36 +55,81 @@ class TimeZoneInfo:
             raise ValueError("No footer data available")
         return self._posix_tz_info
 
-    def utc_to_local(self, dt) -> datetime:
-        # Find the transition that is less than or equal to the given datetime
-        transition = self.body.find_transition(dt)
-        if transition == self.body.transitions[
-            0
-        ] and dt < transition.transition_time_utc.replace(tzinfo=None):
-            # If the datetime is before the first transition, use the first ttinfo
-            ttinfo = self.body.time_type_infos[0]
-            utc_offset_secs = ttinfo.utc_offset_secs
-        elif transition == self.body.transitions[
-            -1
-        ] and dt > transition.transition_time_utc.replace(tzinfo=None):
-            # If the datetime is after the last transition, use the POSIX TZ info footer
-            if self.footer.dst_start is None or self.footer.dst_end is None:
-                # If the footer does not have DST start and end times, use the standard offset
-                utc_offset_secs = self.footer.utc_offset_secs
-            elif (
-                self.footer.dst_start.to_datetime(dt.year)
-                < dt
-                < self.footer.dst_end.to_datetime(dt.year)
-            ) and self.footer.dst_offset_secs is not None:
-                # If the datetime is during DST, use the DST offset
-                utc_offset_secs = self.footer.dst_offset_secs
+    def utc_to_local(self, dt: datetime) -> datetime:
+        """
+        Convert a UTC datetime to *naive* local wall time according to TZif data.
+        - Accepts naive or aware datetimes. Naive is interpreted as UTC.
+        - Returns a naive local datetime (no tzinfo), by design.
+        """
+        # Normalize to aware UTC
+        dt_utc = (
+            dt.replace(tzinfo=timezone.utc)
+            if dt.tzinfo is None
+            else dt.astimezone(timezone.utc)
+        )
+
+        body = self.body
+
+        # 0) No transitions at all => single ttinfo applies
+        if not body.transitions:
+            ttinfo = body.time_type_infos[0]
+            return (dt_utc + timedelta(seconds=ttinfo.utc_offset_secs)).replace(
+                tzinfo=None
+            )
+
+        first = body.transitions[0]
+        last = body.transitions[-1]
+
+        # 1) Before first transition: prefer a non-DST ttinfo if present
+        if dt_utc < first.transition_time_utc:
+            pre_tt = next(
+                (tti for tti in body.time_type_infos if not tti.is_dst),
+                body.time_type_infos[0],
+            )
+            return (dt_utc + timedelta(seconds=pre_tt.utc_offset_secs)).replace(
+                tzinfo=None
+            )
+
+        # 2) Between transitions: use the transition's time type
+        if dt_utc <= last.transition_time_utc:
+            tr = body.find_transition(dt_utc)
+            return (dt_utc + timedelta(seconds=tr.utc_offset_secs)).replace(tzinfo=None)
+
+        # 3) After the last transition: apply POSIX footer rules if available
+        if self._posix_tz_info is not None:
+            footer = self.footer
+            std_offset = footer.utc_offset_secs
+
+            # POSIX rules compare in *naive local wall time*
+            local_std_naive = (dt_utc + timedelta(seconds=std_offset)).replace(
+                tzinfo=None
+            )
+
+            in_dst = False
+            if footer.dst_start is not None and footer.dst_end is not None:
+                start = footer.dst_start.to_datetime(local_std_naive.year)
+                end = footer.dst_end.to_datetime(local_std_naive.year)
+
+                if start < end:
+                    in_dst = (local_std_naive >= start) and (local_std_naive < end)
+                else:
+                    # Southern hemisphere (wraps new year)
+                    in_dst = (local_std_naive >= start) or (local_std_naive < end)
+
+            # Default to +1h if footer has rules but no explicit dst offset
+            if in_dst:
+                offset_secs = (
+                    footer.dst_offset_secs
+                    if footer.dst_offset_secs is not None
+                    else std_offset + 3600
+                )
             else:
-                # Otherwise, use the standard offset
-                utc_offset_secs = self.footer.utc_offset_secs
-        else:
-            # Otherwise, use the offset from the transition
-            utc_offset_secs = transition.utc_offset_secs
-        return dt + timedelta(seconds=utc_offset_secs)
+                offset_secs = std_offset
+
+            return (dt_utc + timedelta(seconds=offset_secs)).replace(tzinfo=None)
+
+        # 4) Fallback: no footer; use last known offset
+        return (dt_utc + timedelta(seconds=last.utc_offset_secs)).replace(tzinfo=None)
 
     @classmethod
     def read(cls, timezone_name: str):

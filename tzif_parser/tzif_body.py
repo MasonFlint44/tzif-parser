@@ -1,6 +1,6 @@
 import bisect
 import struct
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import IO
 
 from .models import LeapSecondTransition, TimeTypeInfo
@@ -47,10 +47,13 @@ class TimeZoneInfoBody:
 
     def find_transition(self, dt: datetime) -> TimeZoneTransition:
         # Find the index of the transition time that is less than or equal to the given datetime
+        dt = (
+            dt.replace(tzinfo=timezone.utc)
+            if dt.tzinfo is None
+            else dt.astimezone(timezone.utc)
+        )
         index = bisect.bisect_right(self.transition_times, dt)
-        if index == 0:
-            return self.transitions[0]
-        return self.transitions[index - 1]
+        return self.transitions[0] if index == 0 else self.transitions[index - 1]
 
     @classmethod
     def read(
@@ -101,13 +104,9 @@ class TimeZoneInfoBody:
     def _read_transition_times(
         cls, file: IO[bytes], timecnt: int, version: int
     ) -> list[datetime]:
-        format_ = f">{timecnt}q" if version >= 2 else f">{timecnt}i"
-        return [
-            datetime.fromtimestamp(transition)
-            for transition in struct.unpack(
-                format_, file.read(8 * timecnt if version >= 2 else 4 * timecnt)
-            )
-        ]
+        fmt = f">{timecnt}q" if version >= 2 else f">{timecnt}i"
+        raw = struct.unpack(fmt, file.read((8 if version >= 2 else 4) * timecnt))
+        return [datetime.fromtimestamp(t, tz=timezone.utc) for t in raw]
 
     @classmethod
     def _read_time_type_indices(cls, file: IO[bytes], timecnt: int) -> list[int]:
@@ -134,13 +133,15 @@ class TimeZoneInfoBody:
     def _read_leap_seconds(
         cls, file: IO[bytes], count: int, version: int
     ) -> list[LeapSecondTransition]:
-        leap_format = f">{count}q" if version >= 2 else f">{count}i"
-        leap_size = struct.calcsize(leap_format)
-        leap_second_structs = []
-        for _ in range(count):
-            leap_second_struct = struct.unpack(leap_format, file.read(leap_size))
-            leap_second_structs.append(LeapSecondTransition(*leap_second_struct))
-        return leap_second_structs
+        # Each leap-second entry is a pair: (transition_time, correction)
+        if count == 0:
+            return []
+        fmt = ">qi" if version >= 2 else ">ii"
+        size = struct.calcsize(fmt)
+        return [
+            LeapSecondTransition(*struct.unpack(fmt, file.read(size)))
+            for _ in range(count)
+        ]
 
     @classmethod
     def _read_indicators(cls, file: IO[bytes], count: int) -> list[int]:

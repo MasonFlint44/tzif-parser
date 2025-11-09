@@ -10,7 +10,7 @@ class TimeZoneTransition:
         time_type_infos: list[TimeTypeInfo],
         time_type_indices: list[int],
         transition_index: int,
-        wall_standard_flags: list[WallStandardFlag],
+        wall_standard_flags: list[int],
         is_utc_flags: list[int],
         timezone_abbrevs: str,
     ) -> None:
@@ -36,44 +36,53 @@ class TimeZoneTransition:
     @property
     def transition_time_local_standard(self) -> datetime:
         if self._transition_index == 0:
-            ttinfo = self._time_type_infos[0]
-            return self.transition_time_utc.astimezone(
-                timezone(timedelta(seconds=ttinfo.utc_offset_secs))
+            # Prefer a non-DST ttinfo if present, else fall back to index 0
+            first_std = next(
+                (tti for tti in self._time_type_infos if not tti.is_dst),
+                self._time_type_infos[0],
             )
+            return self.transition_time_utc.astimezone(
+                timezone(timedelta(seconds=first_std.utc_offset_secs))
+            ).replace(tzinfo=None)
         ttinfo = self._time_type_infos[
             self._time_type_indices[self._transition_index - 1]
         ]
         return self.transition_time_utc.astimezone(
             timezone(timedelta(seconds=ttinfo.utc_offset_secs))
-        )
+        ).replace(tzinfo=None)
 
     @property
     def transition_time_local_wall(self) -> datetime:
         return self.transition_time_utc.astimezone(
             timezone(timedelta(seconds=self.utc_offset_secs))
-        )
+        ).replace(tzinfo=None)
 
     @property
     def transition_time_utc(self) -> datetime:
-        return self._transition_time.replace(tzinfo=timezone.utc)
+        return self._transition_time
 
     @property
     def dst_difference_secs(self) -> int:
         if not self.is_dst:
             return 0
-        # Get the ttinfo for the previous transition
-        ttinfo = self._time_type_infos[
-            self._time_type_indices[self._transition_index - 1]
-        ]
-        if ttinfo.is_dst:
-            return self.utc_offset_secs - ttinfo.utc_offset_secs
-        # Get the ttinfo for the next transition
-        ttinfo = self._time_type_infos[
-            self._time_type_indices[self._transition_index + 1]
-        ]
-        if ttinfo.is_dst:
-            return ttinfo.utc_offset_secs - self.utc_offset_secs
-        # If the previous and next ttinfos are not DST, then we return a best guess
+
+        # previous
+        if self._transition_index > 0:
+            prev_tt = self._time_type_infos[
+                self._time_type_indices[self._transition_index - 1]
+            ]
+            if prev_tt.is_dst:
+                return self.utc_offset_secs - prev_tt.utc_offset_secs
+
+        # next
+        if self._transition_index + 1 < len(self._time_type_indices):
+            next_tt = self._time_type_infos[
+                self._time_type_indices[self._transition_index + 1]
+            ]
+            if next_tt.is_dst:
+                return next_tt.utc_offset_secs - self.utc_offset_secs
+
+        # fallback if neighbors aren't DST or next doesn't exist
         return 3600
 
     @property

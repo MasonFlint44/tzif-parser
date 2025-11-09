@@ -15,12 +15,12 @@ class TimeZoneInfoHeader:
 
     @classmethod
     def read(cls, file: IO[bytes]) -> "TimeZoneInfoHeader":
-        format_ = ">4s1c15x6I"  # Big endian, 4 bytes, 1 byte, skip 15 bytes, 6 unsigned integers
+        format_ = ">4s1c15x6I"
         header_size = struct.calcsize(format_)
         header_data = struct.unpack(format_, file.read(header_size))
         (
             magic,
-            version,
+            version_byte,
             is_utc_flag_count,
             wall_standard_flag_count,
             leap_second_count,
@@ -32,8 +32,10 @@ class TimeZoneInfoHeader:
         if magic != b"TZif":
             raise ValueError("Invalid TZif file: Magic sequence not found.")
 
+        version = 1 if version_byte == b"\x00" else int(version_byte.decode("ascii"))
+
         return cls(
-            int(version) if version != b"\x00" else 1,
+            version,
             is_utc_flag_count,
             wall_standard_flag_count,
             leap_second_count,
