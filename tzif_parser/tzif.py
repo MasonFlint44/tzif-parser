@@ -1,10 +1,15 @@
 import os.path
+from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 
 from .models import TimeZoneResolution
 from .posix import PosixTzInfo
 from .tzif_body import TimeZoneInfoBody
 from .tzif_header import TimeZoneInfoHeader
+
+TimeZoneResolutionCache = namedtuple(
+    "TimeZoneResolutionCache", ["resolution_time", "resolution"]
+)
 
 
 class TimeZoneInfo:
@@ -25,6 +30,7 @@ class TimeZoneInfo:
         self._body_data = body_data
         self._v2_header_data = v2_header_data
         self._v2_body_data = v2_body_data
+        self._last_resolution: TimeZoneResolutionCache | None = None
 
     @property
     def version(self) -> int:
@@ -56,7 +62,12 @@ class TimeZoneInfo:
             raise ValueError("No footer data available")
         return self._posix_tz_info
 
-    # TODO: add per-instance caching to avoid recomputing for same dt
+    def _cache_last_resolution(
+        self, dt_utc: datetime, resolution: TimeZoneResolution
+    ) -> TimeZoneResolution:
+        self._last_resolution = TimeZoneResolutionCache(dt_utc, resolution)
+        return resolution
+
     def resolve(self, dt: datetime) -> TimeZoneResolution:
         """
         Resolve this timezone at a given instant.
@@ -70,6 +81,13 @@ class TimeZoneInfo:
             else dt.astimezone(timezone.utc)
         )
 
+        # Check cache
+        if (
+            self._last_resolution is not None
+            and self._last_resolution.resolution_time == dt_utc
+        ):
+            return self._last_resolution.resolution
+
         body = self.body
 
         # Case 0: No transitions at all => single ttinfo applies
@@ -82,8 +100,11 @@ class TimeZoneInfo:
             off = tt.utc_offset_secs
             abbr = body.get_abbrev_by_index(tt.abbrev_index)
             local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
-            return TimeZoneResolution(
-                self.timezone_name, dt_utc, local, off, tt.is_dst, abbr, delta
+            return self._cache_last_resolution(
+                dt_utc,
+                TimeZoneResolution(
+                    self.timezone_name, dt_utc, local, off, tt.is_dst, abbr, delta
+                ),
             )
 
         first = body.transitions[0]
@@ -102,19 +123,30 @@ class TimeZoneInfo:
             off = tt.utc_offset_secs
             abbr = body.get_abbrev_by_index(tt.abbrev_index)
             local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
-            return TimeZoneResolution(
-                self.timezone_name, dt_utc, local, off, tt.is_dst, abbr, delta
+            return self._cache_last_resolution(
+                dt_utc,
+                TimeZoneResolution(
+                    self.timezone_name, dt_utc, local, off, tt.is_dst, abbr, delta
+                ),
             )
 
         # Case 2: Between transitions
         if dt_utc <= last.transition_time_utc:
             tr = body.find_transition(dt_utc)
-            abbr = tr.abbreviation
             off = tr.utc_offset_secs
             delta = tr.dst_difference_secs if tr.is_dst else 0
             local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
-            return TimeZoneResolution(
-                self.timezone_name, dt_utc, local, off, tr.is_dst, abbr, delta
+            return self._cache_last_resolution(
+                dt_utc,
+                TimeZoneResolution(
+                    self.timezone_name,
+                    dt_utc,
+                    local,
+                    off,
+                    tr.is_dst,
+                    tr.abbreviation,
+                    delta,
+                ),
             )
 
         # Case 3: After the last transition, use POSIX footer if present
@@ -144,17 +176,28 @@ class TimeZoneInfo:
                 abbr = f.standard_abbrev
 
             local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
-            return TimeZoneResolution(
-                self.timezone_name, dt_utc, local, off, in_dst, abbr, delta
+            return self._cache_last_resolution(
+                dt_utc,
+                TimeZoneResolution(
+                    self.timezone_name, dt_utc, local, off, in_dst, abbr, delta
+                ),
             )
 
         # Case 4: No footer; stick to the last known offset
-        abbr = last.abbreviation
         off = last.utc_offset_secs
         delta = last.dst_difference_secs if last.is_dst else 0
         local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
-        return TimeZoneResolution(
-            self.timezone_name, dt_utc, local, off, last.is_dst, abbr, delta
+        return self._cache_last_resolution(
+            dt_utc,
+            TimeZoneResolution(
+                self.timezone_name,
+                dt_utc,
+                local,
+                off,
+                last.is_dst,
+                last.abbreviation,
+                delta,
+            ),
         )
 
     def local(self, dt: datetime) -> datetime:

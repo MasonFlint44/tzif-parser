@@ -14,7 +14,7 @@
     },
     "python.analysis.autoImportCompletions": true,
     "python.testing.pytestArgs": [
-        "tests"
+        "tests", "-o", "log_cli=true", "-o", "log_cli_level=DEBUG",
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true
