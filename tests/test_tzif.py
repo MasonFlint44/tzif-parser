@@ -162,14 +162,13 @@ def test_find_transition_edges_new_york():
     t = tr.transition_time_utc  # aware UTC
 
     # exactly at transition -> should return this transition
-    assert tz_info.body.find_transition(t) is tr
+    assert tz_info.body.find_transition_index(t) == mid_idx
 
     # just before -> previous transition
-    prev = tz_info.body.transitions[mid_idx - 1]
-    assert tz_info.body.find_transition(t - timedelta(seconds=1)) is prev
+    assert tz_info.body.find_transition_index(t - timedelta(seconds=1)) == mid_idx - 1
 
     # just after -> still this transition
-    assert tz_info.body.find_transition(t + timedelta(seconds=1)) is tr
+    assert tz_info.body.find_transition_index(t + timedelta(seconds=1)) == mid_idx
 
 
 def test_find_transition_normalizes_naive_to_utc():
@@ -181,7 +180,9 @@ def test_find_transition_normalizes_naive_to_utc():
     naive = aware.replace(tzinfo=None)
 
     # Both should point to the same transition
-    assert tz_info.body.find_transition(aware) is tz_info.body.find_transition(naive)
+    assert tz_info.body.find_transition_index(
+        aware
+    ) == tz_info.body.find_transition_index(naive)
 
 
 @pytest.mark.parametrize(
@@ -391,3 +392,94 @@ def test_resolve_before_first_and_after_last_matches_zoneinfo():
             expected = utc_dt.astimezone(z).replace(tzinfo=None)
             got = tz_info.resolve(utc_dt).local_time
             assert got == expected, f"{tz} mismatch @ {utc_dt.isoformat()}"
+
+
+def test_next_transition_before_first_transition():
+    tzinfo = TimeZoneInfo.read("America/New_York")
+    body = tzinfo.body
+
+    first = body.transitions[0]
+    # Pick a UTC time well before the first transition
+    dt_utc = first.transition_time_utc - timedelta(days=365)
+
+    res = tzinfo.resolve(dt_utc)
+
+    assert res.next_transition is not None
+    assert res.next_transition == first.transition_time_utc
+    # Sanity: next_transition is in UTC and in the future relative to dt_utc
+    assert res.next_transition.tzinfo is timezone.utc
+    assert res.next_transition > dt_utc.replace(tzinfo=timezone.utc)
+
+
+def test_next_transition_between_transitions():
+    tzinfo = TimeZoneInfo.read("America/New_York")
+    body = tzinfo.body
+
+    # Choose a transition safely away from the ends so there IS a "next" one
+    middle_index = len(body.transitions) // 2 - 1
+    assert middle_index >= 0
+    assert middle_index + 1 < len(body.transitions)
+
+    current_tr = body.transitions[middle_index]
+    next_tr = body.transitions[middle_index + 1]
+
+    # Pick a UTC instant strictly between these two transitions
+    mid_delta = (next_tr.transition_time_utc - current_tr.transition_time_utc) / 2
+    dt_utc = current_tr.transition_time_utc + mid_delta
+
+    res = tzinfo.resolve(dt_utc)
+
+    # We should still be in the regime of TZif body transitions,
+    # so next_transition should be the next body transition.
+    assert res.next_transition == next_tr.transition_time_utc
+
+
+def test_next_transition_after_last_transition_uses_posix_footer():
+    tzinfo = TimeZoneInfo.read("America/New_York")
+
+    # If this zone doesn't have a footer, this test is not applicable.
+    if tzinfo._posix_tz_info is None:  # type: ignore[attr-defined]
+        pytest.skip("Zone has no POSIX footer; cannot test POSIX-based next_transition")
+
+    body = tzinfo.body
+    footer = tzinfo.footer
+
+    last = body.transitions[-1]
+    # Pick a UTC instant comfortably after the last TZif body transition
+    dt_utc = last.transition_time_utc + timedelta(days=365)
+
+    res = tzinfo.resolve(dt_utc)
+
+    # We should now be in the "POSIX footer" regime, so next_transition should
+    # come from the footer rules.
+    assert res.next_transition is not None
+
+    # Reproduce the POSIX-standard-time logic used in TimeZoneInfo._next_posix_transition_utc
+    std = footer.utc_offset_secs
+    local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
+    year = local_std.year
+
+    if footer.dst_start is None or footer.dst_end is None:
+        # If this ever happens, next_transition should be None by design.
+        assert res.next_transition is None
+        return
+
+    candidates = []
+    for y in (year, year + 1):
+        start_y = footer.dst_start.to_datetime(y)
+        end_y = footer.dst_end.to_datetime(y)
+        if start_y > local_std:
+            candidates.append(start_y)
+        if end_y > local_std:
+            candidates.append(end_y)
+
+    # There should be at least one upcoming boundary
+    assert candidates
+    expected_next_local_std = min(candidates)
+    expected_next_utc = (expected_next_local_std - timedelta(seconds=std)).replace(
+        tzinfo=timezone.utc
+    )
+
+    assert res.next_transition == expected_next_utc
+    # Sanity: it’s in the future relative to the query instant
+    assert res.next_transition > dt_utc.replace(tzinfo=timezone.utc)

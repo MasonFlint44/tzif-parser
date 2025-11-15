@@ -68,12 +68,59 @@ class TimeZoneInfo:
         self._last_resolution = TimeZoneResolutionCache(dt_utc, resolution)
         return resolution
 
+    def _next_posix_transition_utc(self, dt_utc: datetime) -> datetime | None:
+        """
+        Compute the next transition instant in UTC using the POSIX footer rules,
+        for a given UTC datetime strictly after the end of the TZif transition body.
+
+        Returns a timezone-aware UTC datetime, or None if no DST rules exist.
+        """
+        if self._posix_tz_info is None:
+            return None
+
+        f = self.footer
+        if f.dst_start is None or f.dst_end is None:
+            return None
+
+        std = f.utc_offset_secs
+
+        # Work in "standard-time local wall clock" coordinates, same as resolve()
+        local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
+        year = local_std.year
+
+        candidates: list[datetime] = []
+
+        # Look for the next boundary in this year or next year
+        for y in (year, year + 1):
+            try:
+                start_y = f.dst_start.to_datetime(y)
+                end_y = f.dst_end.to_datetime(y)
+            except ValueError:
+                # Out-of-range year for datetime, just skip
+                continue
+
+            if start_y > local_std:
+                candidates.append(start_y)
+            if end_y > local_std:
+                candidates.append(end_y)
+
+        if not candidates:
+            return None
+
+        next_local_std = min(candidates)
+        # Boundaries are expressed in standard-time coordinates; convert back to UTC.
+        next_utc = (next_local_std - timedelta(seconds=std)).replace(
+            tzinfo=timezone.utc
+        )
+        return next_utc
+
     def resolve(self, dt: datetime) -> TimeZoneResolution:
         """
         Resolve this timezone at a given instant.
         Accepts naive (interpreted as UTC) or aware (converted to UTC).
-        Returns a TimeZoneResolution with tz-aware UTC `resolution_time`
-        and naive local wall `local_time`.
+        Returns a TimeZoneResolution with tz-aware UTC `resolution_time`,
+        naive local wall `local_time`, and `next_transition` as the UTC datetime
+        of the next transition if one is known.
         """
         dt_utc = (
             dt.replace(tzinfo=timezone.utc)
@@ -100,10 +147,26 @@ class TimeZoneInfo:
             off = tt.utc_offset_secs
             abbr = body.get_abbrev_by_index(tt.abbrev_index)
             local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+
+            # If we *only* have POSIX rules (no body transitions), we can still
+            # try to compute the next_transition from the footer.
+            next_transition = (
+                self._next_posix_transition_utc(dt_utc)
+                if self._posix_tz_info is not None
+                else None
+            )
+
             return self._cache_last_resolution(
                 dt_utc,
                 TimeZoneResolution(
-                    self.timezone_name, dt_utc, local, off, tt.is_dst, abbr, delta
+                    self.timezone_name,
+                    dt_utc,
+                    local,
+                    off,
+                    tt.is_dst,
+                    abbr,
+                    delta,
+                    next_transition=next_transition,
                 ),
             )
 
@@ -123,19 +186,43 @@ class TimeZoneInfo:
             off = tt.utc_offset_secs
             abbr = body.get_abbrev_by_index(tt.abbrev_index)
             local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+
+            next_transition = first.transition_time_utc
+
             return self._cache_last_resolution(
                 dt_utc,
                 TimeZoneResolution(
-                    self.timezone_name, dt_utc, local, off, tt.is_dst, abbr, delta
+                    self.timezone_name,
+                    dt_utc,
+                    local,
+                    off,
+                    tt.is_dst,
+                    abbr,
+                    delta,
+                    next_transition=next_transition,
                 ),
             )
 
-        # Case 2: Between transitions
+        # Case 2: Between transitions (inclusive of the last transition instant)
         if dt_utc <= last.transition_time_utc:
-            tr = body.find_transition(dt_utc)
+            tr_index = body.find_transition_index(dt_utc)
+            if tr_index is None:
+                raise ValueError("No valid transition found for the given datetime")
+            tr = body.transitions[tr_index]
             off = tr.utc_offset_secs
             delta = tr.dst_difference_secs if tr.is_dst else 0
             local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+
+            # Next body transition, if there is one.
+            if tr_index + 1 < len(body.transitions):
+                next_transition = body.transitions[tr_index + 1].transition_time_utc
+            else:
+                # We're at/after the last transition *instant* in the table, so
+                # from the TZif body perspective there is no further transition.
+                # We only use POSIX rules once dt_utc is *after* the end of the
+                # body transitions, which is handled in Case 3 below.
+                next_transition = None
+
             return self._cache_last_resolution(
                 dt_utc,
                 TimeZoneResolution(
@@ -146,6 +233,7 @@ class TimeZoneInfo:
                     tr.is_dst,
                     tr.abbreviation,
                     delta,
+                    next_transition=next_transition,
                 ),
             )
 
@@ -154,7 +242,7 @@ class TimeZoneInfo:
             f = self.footer
             std = f.utc_offset_secs
 
-            # POSIX rules compare using *naive local wall time*
+            # POSIX rules compare using *naive local wall time* in standard offset
             local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
             in_dst = False
             if f.dst_start is not None and f.dst_end is not None:
@@ -176,17 +264,31 @@ class TimeZoneInfo:
                 abbr = f.standard_abbrev
 
             local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+
+            # Now that we're past the end of the TZif body, use the POSIX rules
+            # to find the next transition.
+            next_transition = self._next_posix_transition_utc(dt_utc)
+
             return self._cache_last_resolution(
                 dt_utc,
                 TimeZoneResolution(
-                    self.timezone_name, dt_utc, local, off, in_dst, abbr, delta
+                    self.timezone_name,
+                    dt_utc,
+                    local,
+                    off,
+                    in_dst,
+                    abbr,
+                    delta,
+                    next_transition=next_transition,
                 ),
             )
 
-        # Case 4: No footer; stick to the last known offset
+        # Case 4: No footer; stick to the last known offset, no further transitions known
         off = last.utc_offset_secs
         delta = last.dst_difference_secs if last.is_dst else 0
         local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+        next_transition = None
+
         return self._cache_last_resolution(
             dt_utc,
             TimeZoneResolution(
@@ -197,6 +299,7 @@ class TimeZoneInfo:
                 last.is_dst,
                 last.abbreviation,
                 delta,
+                next_transition=next_transition,
             ),
         )
 
@@ -215,6 +318,9 @@ class TimeZoneInfo:
 
     def abbreviation(self, dt: datetime) -> str | None:
         return self.resolve(dt).abbreviation
+
+    def next_transition(self, dt: datetime) -> datetime | None:
+        return self.resolve(dt).next_transition
 
     @classmethod
     def read(cls, timezone_name: str):

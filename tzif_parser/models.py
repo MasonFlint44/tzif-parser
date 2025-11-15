@@ -16,6 +16,7 @@ class TimeZoneResolution:
     is_dst: bool
     abbreviation: str | None
     dst_difference_secs: int
+    next_transition: datetime | None  # tz-aware UTC
 
 
 class WallStandardFlag(Enum):

@@ -50,7 +50,7 @@ class TimeZoneInfoBody:
             raise IndexError("Index out of range")
         return self._timezone_abbrevs[index:].partition("\x00")[0]
 
-    def find_transition(self, dt: datetime) -> TimeZoneTransition:
+    def find_transition_index(self, dt: datetime) -> int | None:
         # Find the index of the transition time that is less than or equal to the given datetime
         dt = (
             dt.replace(tzinfo=timezone.utc)
@@ -58,7 +58,9 @@ class TimeZoneInfoBody:
             else dt.astimezone(timezone.utc)
         )
         index = bisect.bisect_right(self.transition_times, dt)
-        return self.transitions[0] if index == 0 else self.transitions[index - 1]
+        if index == 0:
+            return None
+        return index - 1
 
     @classmethod
     def read(
