@@ -13,13 +13,13 @@ from .tzif_header import TimeZoneInfoHeader
 class TimeZoneInfoBody:
     def __init__(
         self,
-        transition_times,
-        leap_second_transitions,
-        time_type_infos,
-        time_type_indices,
-        timezone_abbrevs,
-        wall_standard_flags,
-        is_utc_flags,
+        transition_times: list[datetime],
+        leap_second_transitions: list[LeapSecondTransition],
+        time_type_infos: list[TimeTypeInfo],
+        time_type_indices: list[int],
+        timezone_abbrevs: str,
+        wall_standard_flags: list[int],
+        is_utc_flags: list[int],
     ) -> None:
         self.transition_times = transition_times
         self.leap_second_transitions = leap_second_transitions

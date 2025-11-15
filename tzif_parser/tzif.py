@@ -129,11 +129,38 @@ class TimeZoneInfo:
         )
 
         # Check cache
-        if (
-            self._last_resolution is not None
-            and self._last_resolution.resolution_time == dt_utc
-        ):
-            return self._last_resolution.resolution
+        if self._last_resolution is not None:
+            cached_dt_utc: datetime = self._last_resolution.resolution_time
+            cached_res: TimeZoneResolution = self._last_resolution.resolution
+
+            # Exact match: fast path
+            if cached_dt_utc == dt_utc:
+                return cached_res
+
+            next_transition = cached_res.next_transition
+
+            # Use range caching when we actually know the next transition
+            # and the requested time is between the cached resolution_time
+            # and the next_transition.
+            if (
+                next_transition is not None
+                and cached_dt_utc <= dt_utc < next_transition
+            ):
+                off = cached_res.utc_offset_secs
+                local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+
+                # Build a new resolution for this dt_utc, but reuse the same offset,
+                # DST flag, abbr, delta, and next_transition.
+                return TimeZoneResolution(
+                    cached_res.timezone_name,
+                    dt_utc,  # resolution_time
+                    local,  # local_time
+                    off,  # utc_offset_secs
+                    cached_res.is_dst,
+                    cached_res.abbreviation,
+                    cached_res.dst_difference_secs,
+                    next_transition=next_transition,
+                )
 
         body = self.body
 
