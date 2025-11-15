@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import available_timezones
 
 import pytest
+from zoneinfo_shim.zoneinfo import ZoneInfo
 
-from my_zoneinfo.zoneinfo import ZoneInfo
 from tzif_parser import TimeZoneInfo
 
 
@@ -42,7 +42,7 @@ def test_read_transitions():
             transitition.transition_time_utc.replace(tzinfo=None)
             for transitition in tz_info.body.transitions
         ]
-        # Build a list of UTC transitions from zoneinfo (python impl via my_zoneinfo)
+        # Build a list of UTC transitions from zoneinfo (python impl via zoneinfo_shim)
         zoneinfo_utc_transitions = [
             datetime.fromtimestamp(transition) for transition in zoneinfo._trans_utc
         ]

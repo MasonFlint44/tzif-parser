@@ -2,7 +2,7 @@
 
 ## Project Overview
 - **tzif-parser** is a Python library for parsing Time Zone Information Format (TZif) files, extracting transitions, offsets, and POSIX time zone strings.
-- Main code is in `tzif_parser/` (core parsing, models, logic) and `my_zoneinfo/` (zoneinfo compatibility/shims for Python's zoneinfo).
+- Main code is in `tzif_parser/` (core parsing, models, logic) and `zoneinfo_shim/` (zoneinfo compatibility/shims for Python's zoneinfo).
 - Tests are in `tests/` and use `pytest` conventions.
 
 ## Architecture & Key Components
@@ -13,7 +13,7 @@
 - **POSIX Footer:**
   - TZif files include a POSIX time zone string as their footer, parsed and exposed via `PosixTzInfo`.
 - **Zoneinfo Integration:**
-  - `my_zoneinfo/zoneinfo.py` provides a drop-in replacement for Python's zoneinfo, using tzif-parser under the hood.
+  - `zoneinfo_shim/zoneinfo.py` provides a drop-in replacement for Python's zoneinfo, using tzif-parser under the hood.
   - The shim allows access to transitions and private variables in ZoneInfo for testing, which are not available in the standard C implementation.
   - `_tzpath.py` and `_common.py` handle zoneinfo file lookup and shared utilities.
 
@@ -38,7 +38,7 @@
   - Parsing logic is split by TZif file sections (header/body/footer) for clarity and maintainability.
   - POSIX string parsing is isolated in `posix.py`.
 - **Zoneinfo Compatibility:**
-  - `my_zoneinfo/zoneinfo.py` mimics the standard library API, but uses tzif-parser for file reading.
+  - `zoneinfo_shim/zoneinfo.py` mimics the standard library API, but uses tzif-parser for file reading.
   - `_tzpath.py` abstracts zoneinfo file location logic for portability.
 
 ## Integration Points
@@ -61,13 +61,13 @@
   ```
 - Use zoneinfo shim:
   ```python
-  from my_zoneinfo import ZoneInfo
+  from zoneinfo_shim import ZoneInfo
   tz = ZoneInfo("America/New_York")
   ```
 
 ## References
 - See `README.md` for API details and usage examples.
-- Key files: `tzif_parser/tzif.py`, `tzif_parser/models.py`, `my_zoneinfo/zoneinfo.py`, `tests/`
+- Key files: `tzif_parser/tzif.py`, `tzif_parser/models.py`, `zoneinfo_shim/zoneinfo.py`, `tests/`
 
 ---
 
