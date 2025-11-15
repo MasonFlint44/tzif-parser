@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import available_timezones
 
 import pytest
-from zoneinfo_shim.zoneinfo import ZoneInfo
 
 from tzif_parser import TimeZoneInfo
+from zoneinfo_shim.zoneinfo import ZoneInfo
 
 
 @pytest.mark.parametrize(
