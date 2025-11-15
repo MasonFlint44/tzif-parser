@@ -245,11 +245,14 @@ class TimeZoneInfo:
             if tr_index + 1 < len(body.transitions):
                 next_transition = body.transitions[tr_index + 1].transition_time_utc
             else:
-                # We're at/after the last transition *instant* in the table, so
-                # from the TZif body perspective there is no further transition.
-                # We only use POSIX rules once dt_utc is *after* the end of the
-                # body transitions, which is handled in Case 3 below.
-                next_transition = None
+                # We are at the last transition instant in the TZif body.
+                # If a POSIX footer exists, use it to compute the next
+                # transition boundary; otherwise, we truly don't know of
+                # any future transitions.
+                if self._posix_tz_info is not None:
+                    next_transition = self._next_posix_transition_utc(dt_utc)
+                else:
+                    next_transition = None
 
             return self._cache_last_resolution(
                 dt_utc,
