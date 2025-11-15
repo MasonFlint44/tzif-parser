@@ -128,6 +128,9 @@ class TimeZoneInfo:
             else dt.astimezone(timezone.utc)
         )
 
+        # Normalize to whole seconds to improve cache hits
+        dt_utc = dt_utc.replace(microsecond=0)
+
         # Check cache
         if self._last_resolution is not None:
             cached_dt_utc: datetime = self._last_resolution.resolution_time
