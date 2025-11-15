@@ -122,14 +122,12 @@ class TimeZoneInfo:
         naive local wall `local_time`, and `next_transition` as the UTC datetime
         of the next transition if one is known.
         """
-        dt_utc = (
-            dt.replace(tzinfo=timezone.utc)
-            if dt.tzinfo is None
-            else dt.astimezone(timezone.utc)
-        )
-
         # Normalize to whole seconds to improve cache hits
-        dt_utc = dt_utc.replace(microsecond=0)
+        dt_utc = (
+            dt.replace(tzinfo=timezone.utc, microsecond=0)
+            if dt.tzinfo is None
+            else dt.replace(microsecond=0).astimezone(timezone.utc)
+        )
 
         # Check cache
         if self._last_resolution is not None:
