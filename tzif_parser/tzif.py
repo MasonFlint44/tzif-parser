@@ -1,5 +1,6 @@
 import os.path
 from collections import namedtuple
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from .models import TimeZoneResolution
@@ -151,15 +152,10 @@ class TimeZoneInfo:
 
                 # Build a new resolution for this dt_utc, but reuse the same offset,
                 # DST flag, abbr, delta, and next_transition.
-                return TimeZoneResolution(
-                    cached_res.timezone_name,
-                    dt_utc,  # resolution_time
-                    local,  # local_time
-                    off,  # utc_offset_secs
-                    cached_res.is_dst,
-                    cached_res.abbreviation,
-                    cached_res.dst_difference_secs,
-                    next_transition=next_transition,
+                return replace(
+                    cached_res,
+                    resolution_time=dt_utc,
+                    local_time=local,
                 )
 
         body = self.body
