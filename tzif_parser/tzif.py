@@ -85,7 +85,8 @@ class TimeZoneInfo:
         std = f.utc_offset_secs
 
         # Work in "standard-time local wall clock" coordinates, same as resolve()
-        local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
+        std_delta = timedelta(seconds=std)
+        local_std = (dt_utc + std_delta).replace(tzinfo=None)
         year = local_std.year
 
         candidates: list[datetime] = []
@@ -109,9 +110,7 @@ class TimeZoneInfo:
 
         next_local_std = min(candidates)
         # Boundaries are expressed in standard-time coordinates; convert back to UTC.
-        next_utc = (next_local_std - timedelta(seconds=std)).replace(
-            tzinfo=timezone.utc
-        )
+        next_utc = (next_local_std - std_delta).replace(tzinfo=timezone.utc)
         return next_utc
 
     def resolve(self, dt: datetime) -> TimeZoneResolution:
@@ -167,8 +166,8 @@ class TimeZoneInfo:
 
         # Case 0: No transitions at all => single ttinfo applies
         if not body.transitions:
-            tt = body.time_type_infos[0]
             std = next((x for x in body.time_type_infos if not x.is_dst), None)
+            tt = std if std is not None else body.time_type_infos[0]
             delta = (
                 (tt.utc_offset_secs - std.utc_offset_secs) if (tt.is_dst and std) else 0
             )
@@ -203,11 +202,8 @@ class TimeZoneInfo:
 
         # Case 1: Before first transition
         if dt_utc < first.transition_time_utc:
-            tt = next(
-                (x for x in body.time_type_infos if not x.is_dst),
-                body.time_type_infos[0],
-            )
             std = next((x for x in body.time_type_infos if not x.is_dst), None)
+            tt = std if std is not None else body.time_type_infos[0]
             delta = (
                 (tt.utc_offset_secs - std.utc_offset_secs) if (tt.is_dst and std) else 0
             )
