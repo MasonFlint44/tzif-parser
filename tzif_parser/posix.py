@@ -114,10 +114,17 @@ class PosixTzInfo:
         return self.dst_difference_secs / 3600
 
     @classmethod
-    def read(cls, file: IO[bytes]) -> "PosixTzInfo":
+    def read(cls, file: IO[bytes]) -> "PosixTzInfo | None":
         # Adapted from zoneinfo._zoneinfo._parse_tz_str
         _ = file.readline()
-        posix_string = file.readline().rstrip()
+        posix_line = file.readline()
+        if posix_line == b"":
+            return None
+
+        posix_string = posix_line.rstrip(b"\n\x00")
+        if not posix_string:
+            return None
+
         local_tz, dst_start, dst_end = (
             posix_string.split(b",")
             if b"," in posix_string

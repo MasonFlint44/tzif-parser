@@ -8,6 +8,49 @@ from tzif_parser import TimeZoneInfo
 from zoneinfo_shim.zoneinfo import ZoneInfo
 
 
+def _find_next_zoneinfo_transition(
+    zone: ZoneInfo, start: datetime, end: datetime | None = None
+) -> datetime | None:
+    step = timedelta(hours=6)
+    limit = end or (start + timedelta(days=366 * 3))
+    prev_offset = start.astimezone(zone).utcoffset()
+    probe = start
+
+    while probe < limit:
+        next_probe = min(probe + step, limit)
+        next_offset = next_probe.astimezone(zone).utcoffset()
+        if next_offset != prev_offset:
+            low_ts = int(probe.timestamp())
+            high_ts = int(next_probe.timestamp())
+            while low_ts + 1 < high_ts:
+                mid_ts = (low_ts + high_ts) // 2
+                mid = datetime.fromtimestamp(mid_ts, tz=timezone.utc)
+                if mid.astimezone(zone).utcoffset() == prev_offset:
+                    low_ts = mid_ts
+                else:
+                    high_ts = mid_ts
+            return datetime.fromtimestamp(high_ts, tz=timezone.utc)
+        probe = next_probe
+
+    return None
+
+
+def _zoneinfo_transitions_in_year(zone: ZoneInfo, year: int) -> list[datetime]:
+    start = datetime(year, 1, 1, tzinfo=timezone.utc)
+    end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    transitions: list[datetime] = []
+    probe = start
+
+    while True:
+        next_transition = _find_next_zoneinfo_transition(zone, probe, end)
+        if next_transition is None or next_transition >= end:
+            break
+        transitions.append(next_transition)
+        probe = next_transition + timedelta(seconds=1)
+
+    return transitions
+
+
 @pytest.mark.parametrize(
     "utc_time, expected_offset",
     [
@@ -121,6 +164,17 @@ def test_read(
     assert len(tz_info.body.timezone_abbrevs) == abbrevs_count
 
     assert len(tz_info.body.leap_second_transitions) == leap_seconds_count
+
+
+def test_read_timezone_without_posix_footer():
+    tz_info = TimeZoneInfo.read("right/UTC")
+
+    assert tz_info.timezone_name == "right/UTC"
+    # right/* zones intentionally omit POSIX rules; ensure we tolerate this.
+    assert tz_info.footer is None
+    # Still usable for resolving instants
+    res = tz_info.resolve(datetime(2025, 1, 1, tzinfo=timezone.utc))
+    assert res.utc_offset_secs == 0
 
 
 def test_read_all():
@@ -255,6 +309,30 @@ def test_footer_far_future_matches_zoneinfo(tz, far_dates):
         )
         got = tz_info.resolve(utc_dt).local_time
         assert got == expected, f"POSIX footer mismatch for {tz} at {utc_dt}"
+
+
+def test_footer_transition_boundaries_match_zoneinfo():
+    tz = "America/New_York"
+    tz_info = TimeZoneInfo.read(tz)
+    z = ZoneInfo(tz)
+
+    last_year = tz_info.body.transitions[-1].transition_time_utc.year
+    # Pick a year that is guaranteed to be served purely from the POSIX footer.
+    future_year = last_year + 3
+    transitions = _zoneinfo_transitions_in_year(z, future_year)
+    assert len(transitions) >= 2
+
+    for transition in transitions[:2]:
+        before = transition - timedelta(seconds=1)
+        after = transition + timedelta(seconds=1)
+
+        before_res = tz_info.resolve(before)
+        assert before_res.next_transition == transition
+
+        for instant in (before, transition, after):
+            expected = instant.astimezone(z).replace(tzinfo=None)
+            got = tz_info.resolve(instant).local_time
+            assert got == expected, f"Mismatch at {instant} for {tz}"
 
 
 @pytest.mark.parametrize(
@@ -442,8 +520,6 @@ def test_next_transition_after_last_transition_uses_posix_footer():
         pytest.skip("Zone has no POSIX footer; cannot test POSIX-based next_transition")
 
     body = tzinfo.body
-    footer = tzinfo.footer
-
     last = body.transitions[-1]
     # Pick a UTC instant comfortably after the last TZif body transition
     dt_utc = last.transition_time_utc + timedelta(days=365)
@@ -454,32 +530,10 @@ def test_next_transition_after_last_transition_uses_posix_footer():
     # come from the footer rules.
     assert res.next_transition is not None
 
-    # Reproduce the POSIX-standard-time logic used in TimeZoneInfo._next_posix_transition_utc
-    std = footer.utc_offset_secs
-    local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
-    year = local_std.year
+    z = ZoneInfo("America/New_York")
+    expected_next = _find_next_zoneinfo_transition(z, dt_utc)
+    assert expected_next is not None
 
-    if footer.dst_start is None or footer.dst_end is None:
-        # If this ever happens, next_transition should be None by design.
-        assert res.next_transition is None
-        return
-
-    candidates = []
-    for y in (year, year + 1):
-        start_y = footer.dst_start.to_datetime(y)
-        end_y = footer.dst_end.to_datetime(y)
-        if start_y > local_std:
-            candidates.append(start_y)
-        if end_y > local_std:
-            candidates.append(end_y)
-
-    # There should be at least one upcoming boundary
-    assert candidates
-    expected_next_local_std = min(candidates)
-    expected_next_utc = (expected_next_local_std - timedelta(seconds=std)).replace(
-        tzinfo=timezone.utc
-    )
-
-    assert res.next_transition == expected_next_utc
+    assert res.next_transition == expected_next
     # Sanity: it’s in the future relative to the query instant
     assert res.next_transition > dt_utc.replace(tzinfo=timezone.utc)

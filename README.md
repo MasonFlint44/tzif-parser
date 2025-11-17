@@ -47,7 +47,7 @@ Represents the time zone information parsed from a TZif file.
 - `version`: The version of the TZif file.
 - `header`: The header data of the TZif file.
 - `body`: The body data of the TZif file.
-- `footer`: The POSIX time zone information.
+- `footer`: The POSIX time zone information, or `None` if the TZif file omits the POSIX string.
 
 ### TimeZoneInfoHeader
 

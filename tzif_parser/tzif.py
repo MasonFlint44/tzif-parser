@@ -58,9 +58,7 @@ class TimeZoneInfo:
         return self._v2_body_data
 
     @property
-    def footer(self) -> PosixTzInfo:
-        if self._posix_tz_info is None:
-            raise ValueError("No footer data available")
+    def footer(self) -> PosixTzInfo | None:
         return self._posix_tz_info
 
     def _cache_last_resolution(
@@ -76,42 +74,47 @@ class TimeZoneInfo:
 
         Returns a timezone-aware UTC datetime, or None if no DST rules exist.
         """
-        if self._posix_tz_info is None:
-            return None
-
         f = self.footer
+        if f is None:
+            return None
         if f.dst_start is None or f.dst_end is None:
             return None
 
         std = f.utc_offset_secs
+        dst_offset = (
+            f.dst_offset_secs if f.dst_offset_secs is not None else std + 3600
+        )
+        dst_delta = timedelta(seconds=dst_offset - std)
 
         # Work in "standard-time local wall clock" coordinates, same as resolve()
         std_delta = timedelta(seconds=std)
         local_std = (dt_utc + std_delta).replace(tzinfo=None)
         year = local_std.year
 
-        candidates: list[datetime] = []
+        candidates: list[tuple[datetime, datetime, int]] = []
 
         # Look for the next boundary in this year or next year
         for y in (year, year + 1):
             try:
                 start_y = f.dst_start.to_datetime(y)
-                end_y = f.dst_end.to_datetime(y)
+                end_y_dst = f.dst_end.to_datetime(y)
             except ValueError:
                 # Out-of-range year for datetime, just skip
                 continue
 
             if start_y > local_std:
-                candidates.append(start_y)
-            if end_y > local_std:
-                candidates.append(end_y)
+                candidates.append((start_y, start_y, std))
+
+            end_y_std = end_y_dst - dst_delta
+            if end_y_std > local_std:
+                candidates.append((end_y_std, end_y_dst, dst_offset))
 
         if not candidates:
             return None
 
-        next_local_std = min(candidates)
-        # Boundaries are expressed in standard-time coordinates; convert back to UTC.
-        next_utc = (next_local_std - std_delta).replace(tzinfo=timezone.utc)
+        _, local_wall, boundary_offset = min(candidates, key=lambda x: x[0])
+        boundary_delta = timedelta(seconds=boundary_offset)
+        next_utc = (local_wall - boundary_delta).replace(tzinfo=timezone.utc)
         return next_utc
 
     def resolve(self, dt: datetime) -> TimeZoneResolution:
@@ -261,16 +264,22 @@ class TimeZoneInfo:
             )
 
         # Case 3: After the last transition, use POSIX footer if present
-        if self._posix_tz_info is not None:
-            f = self.footer
+        f = self.footer
+        if f is not None:
             std = f.utc_offset_secs
+            dst_offset = (
+                f.dst_offset_secs if f.dst_offset_secs is not None else std + 3600
+            )
+            dst_delta = dst_offset - std
 
             # POSIX rules compare using *naive local wall time* in standard offset
             local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
             in_dst = False
             if f.dst_start is not None and f.dst_end is not None:
                 start = f.dst_start.to_datetime(local_std.year)
-                end = f.dst_end.to_datetime(local_std.year)
+                end = f.dst_end.to_datetime(local_std.year) - timedelta(
+                    seconds=dst_delta
+                )
                 if start < end:
                     in_dst = start <= local_std < end
                 else:
@@ -278,8 +287,8 @@ class TimeZoneInfo:
                     in_dst = (local_std >= start) or (local_std < end)
 
             if in_dst:
-                off = f.dst_offset_secs if f.dst_offset_secs is not None else std + 3600
-                delta = (off - std) if f.dst_offset_secs is not None else 3600
+                off = dst_offset
+                delta = dst_delta
                 abbr = f.dst_abbrev or f.standard_abbrev
             else:
                 off = std
@@ -348,7 +357,7 @@ class TimeZoneInfo:
     @classmethod
     def read(cls, timezone_name: str):
         timezone_dir = os.environ.get("TZDIR", "/usr/share/zoneinfo")
-        filepath = cls.get_zoneinfo_filepath(timezone_name, timezone_dir)
+        filepath = os.path.join(timezone_dir, *timezone_name.split("/"))
         with open(filepath, "rb") as file:
             header_data = TimeZoneInfoHeader.read(file)
             body_data = TimeZoneInfoBody.read(file, header_data)
@@ -370,10 +379,6 @@ class TimeZoneInfo:
                 v2_body_data,
                 v2_posix_string,
             )
-
-    @classmethod
-    def get_zoneinfo_filepath(cls, timezone_name: str, zoneinfo_dir: str) -> str:
-        return os.path.join(zoneinfo_dir, *timezone_name.split("/"))
 
     def __repr__(self) -> str:
         return (
