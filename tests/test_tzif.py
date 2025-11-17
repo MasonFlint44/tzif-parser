@@ -5,6 +5,10 @@ from zoneinfo import available_timezones
 import pytest
 
 from tzif_parser import TimeZoneInfo
+from tzif_parser.models import TimeTypeInfo
+from tzif_parser.posix import PosixTzDateTime, PosixTzInfo
+from tzif_parser.tzif_body import TimeZoneInfoBody
+from tzif_parser.tzif_header import TimeZoneInfoHeader
 from zoneinfo_shim.zoneinfo import ZoneInfo
 
 
@@ -51,6 +55,49 @@ def _zoneinfo_transitions_in_year(zone: ZoneInfo, year: int) -> list[datetime]:
     return transitions
 
 
+def _posix_only_timezone() -> TimeZoneInfo:
+    header = TimeZoneInfoHeader(
+        version=1,
+        is_utc_flag_count=1,
+        wall_standard_flag_count=1,
+        leap_second_transitions_count=0,
+        transitions_count=0,
+        local_time_type_count=1,
+        timezone_abbrev_byte_count=len("STD\x00DST\x00"),
+    )
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=[],
+        time_type_infos=[
+            TimeTypeInfo(
+                utc_offset_secs=-5 * 3600,
+                is_dst=False,
+                abbrev_index=0,
+            )
+        ],
+        time_type_indices=[],
+        timezone_abbrevs="STD\x00DST\x00",
+        wall_standard_flags=[0],
+        is_utc_flags=[0],
+    )
+    posix_info = PosixTzInfo(
+        posix_string="STD5DST,M3.2.0/2,M11.1.0/2",
+        standard_abbrev="STD",
+        utc_offset_secs=-5 * 3600,
+        dst_abbrev="DST",
+        dst_offset_secs=-4 * 3600,
+        dst_start=PosixTzDateTime(3, 2, 0, 2, 0, 0),
+        dst_end=PosixTzDateTime(11, 1, 0, 2, 0, 0),
+    )
+    return TimeZoneInfo(
+        "Test/PosixOnly",
+        "/tmp/Test/PosixOnly",
+        header,
+        body,
+        posix_tz_info=posix_info,
+    )
+
+
 @pytest.mark.parametrize(
     "utc_time, expected_offset",
     [
@@ -68,9 +115,30 @@ def test_resolve_local_time_matches_offset_cases(utc_time, expected_offset):
     assert res.utc_offset_secs == expected_offset
 
 
+def test_resolve_preserves_fold_for_ambiguous_instants():
+    tz_info = TimeZoneInfo.read("America/New_York")
+    zone = ZoneInfo("America/New_York")
+
+    first_occurrence = datetime(2023, 11, 5, 1, 30, tzinfo=zone)
+    second_occurrence = first_occurrence.replace(fold=1)
+
+    first_res = tz_info.resolve(first_occurrence)
+    second_res = tz_info.resolve(second_occurrence)
+
+    assert first_res.utc_offset_secs == -4 * 3600
+    assert second_res.utc_offset_secs == -5 * 3600
+
+
 def test_read_invalid_timezone():
     with pytest.raises(FileNotFoundError):
         TimeZoneInfo.read("Invalid/Timezone")
+
+
+def test_read_rejects_path_traversal():
+    with pytest.raises(ValueError):
+        TimeZoneInfo.read("../etc/passwd")
+    with pytest.raises(ValueError):
+        TimeZoneInfo.read("/absolute/path")
 
 
 def test_read_transitions():
@@ -175,6 +243,24 @@ def test_read_timezone_without_posix_footer():
     # Still usable for resolving instants
     res = tz_info.resolve(datetime(2025, 1, 1, tzinfo=timezone.utc))
     assert res.utc_offset_secs == 0
+
+
+def test_resolve_uses_posix_footer_without_transitions():
+    tz_info = _posix_only_timezone()
+
+    winter = datetime(2025, 1, 15, tzinfo=timezone.utc)
+    summer = datetime(2025, 6, 15, tzinfo=timezone.utc)
+
+    winter_res = tz_info.resolve(winter)
+    assert winter_res.utc_offset_secs == -5 * 3600
+    assert winter_res.is_dst is False
+    assert winter_res.abbreviation == "STD"
+
+    summer_res = tz_info.resolve(summer)
+    assert summer_res.utc_offset_secs == -4 * 3600
+    assert summer_res.is_dst is True
+    assert summer_res.abbreviation == "DST"
+    assert summer_res.dst_difference_secs == 3600
 
 
 def test_read_all():
