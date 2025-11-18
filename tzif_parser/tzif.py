@@ -12,6 +12,8 @@ TimeZoneResolutionCache = namedtuple(
     "TimeZoneResolutionCache", ["resolution_time", "resolution"]
 )
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
 
 class TimeZoneInfo:
     def __init__(
@@ -66,6 +68,41 @@ class TimeZoneInfo:
     ) -> TimeZoneResolution:
         self._last_resolution = TimeZoneResolutionCache(dt_utc, resolution)
         return resolution
+
+    def _leap_correction_seconds(self, dt_utc: datetime, body: TimeZoneInfoBody) -> int:
+        idx = body.find_leap_second_index(dt_utc)
+        if idx is None:
+            return 0
+        return body.leap_second_transitions[idx].correction
+
+    def _next_leap_transition_utc(
+        self, dt_utc: datetime, body: TimeZoneInfoBody
+    ) -> datetime | None:
+        idx = body.find_leap_second_index(dt_utc)
+        if idx is None:
+            next_idx = 0
+        else:
+            next_idx = idx + 1
+
+        if next_idx >= len(body.leap_second_transitions):
+            return None
+        return (
+            _EPOCH
+            + timedelta(seconds=body.leap_second_transitions[next_idx].transition_time)
+        ).replace(tzinfo=timezone.utc)
+
+    def _merge_leap_transition(
+        self,
+        next_transition: datetime | None,
+        dt_utc: datetime,
+        body: TimeZoneInfoBody,
+    ) -> datetime | None:
+        leap_next = self._next_leap_transition_utc(dt_utc, body)
+        if leap_next is None:
+            return next_transition
+        if next_transition is None or leap_next < next_transition:
+            return leap_next
+        return next_transition
 
     def _posix_footer_state(
         self, dt_utc: datetime
@@ -194,6 +231,7 @@ class TimeZoneInfo:
                 )
 
         body = self.body
+        leap_corr = self._leap_correction_seconds(dt_utc, body)
 
         # Case 0: No transitions at all => single ttinfo applies
         if not body.transitions:
@@ -212,8 +250,13 @@ class TimeZoneInfo:
                 abbr = body.get_abbrev_by_index(tt.abbrev_index)
                 in_dst = tt.is_dst
 
-            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
-            next_transition = self._next_posix_transition_utc(dt_utc)
+            effective_off = off + leap_corr
+            local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
+            next_transition = self._merge_leap_transition(
+                self._next_posix_transition_utc(dt_utc),
+                dt_utc,
+                body,
+            )
 
             return self._cache_last_resolution(
                 dt_utc,
@@ -221,7 +264,7 @@ class TimeZoneInfo:
                     self.timezone_name,
                     dt_utc,
                     local,
-                    off,
+                    effective_off,
                     in_dst,
                     abbr,
                     delta,
@@ -241,9 +284,12 @@ class TimeZoneInfo:
             )
             off = tt.utc_offset_secs
             abbr = body.get_abbrev_by_index(tt.abbrev_index)
-            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+            effective_off = off + leap_corr
+            local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
 
-            next_transition = first.transition_time_utc
+            next_transition = self._merge_leap_transition(
+                first.transition_time_utc, dt_utc, body
+            )
 
             return self._cache_last_resolution(
                 dt_utc,
@@ -251,7 +297,7 @@ class TimeZoneInfo:
                     self.timezone_name,
                     dt_utc,
                     local,
-                    off,
+                    effective_off,
                     tt.is_dst,
                     abbr,
                     delta,
@@ -267,7 +313,8 @@ class TimeZoneInfo:
             tr = body.transitions[tr_index]
             off = tr.utc_offset_secs
             delta = tr.dst_difference_secs if tr.is_dst else 0
-            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+            effective_off = off + leap_corr
+            local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
 
             # Next body transition, if there is one.
             if tr_index + 1 < len(body.transitions):
@@ -282,13 +329,15 @@ class TimeZoneInfo:
                 else:
                     next_transition = None
 
+            next_transition = self._merge_leap_transition(next_transition, dt_utc, body)
+
             return self._cache_last_resolution(
                 dt_utc,
                 TimeZoneResolution(
                     self.timezone_name,
                     dt_utc,
                     local,
-                    off,
+                    effective_off,
                     tr.is_dst,
                     tr.abbreviation,
                     delta,
@@ -300,11 +349,16 @@ class TimeZoneInfo:
         posix_state = self._posix_footer_state(dt_utc)
         if posix_state is not None:
             off, delta, abbr, in_dst = posix_state
-            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+            effective_off = off + leap_corr
+            local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
 
             # Now that we're past the end of the TZif body, use the POSIX rules
             # to find the next transition.
-            next_transition = self._next_posix_transition_utc(dt_utc)
+            next_transition = self._merge_leap_transition(
+                self._next_posix_transition_utc(dt_utc),
+                dt_utc,
+                body,
+            )
 
             return self._cache_last_resolution(
                 dt_utc,
@@ -312,7 +366,7 @@ class TimeZoneInfo:
                     self.timezone_name,
                     dt_utc,
                     local,
-                    off,
+                    effective_off,
                     in_dst,
                     abbr,
                     delta,
@@ -323,8 +377,9 @@ class TimeZoneInfo:
         # Case 4: No footer; stick to the last known offset, no further transitions known
         off = last.utc_offset_secs
         delta = last.dst_difference_secs if last.is_dst else 0
-        local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
-        next_transition = None
+        effective_off = off + leap_corr
+        local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
+        next_transition = self._merge_leap_transition(None, dt_utc, body)
 
         return self._cache_last_resolution(
             dt_utc,
@@ -332,7 +387,7 @@ class TimeZoneInfo:
                 self.timezone_name,
                 dt_utc,
                 local,
-                off,
+                effective_off,
                 last.is_dst,
                 last.abbreviation,
                 delta,

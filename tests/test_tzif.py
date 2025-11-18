@@ -1,4 +1,6 @@
+import io
 import os
+import struct
 from datetime import datetime, timedelta, timezone
 from zoneinfo import available_timezones
 
@@ -98,6 +100,23 @@ def _posix_only_timezone() -> TimeZoneInfo:
     )
 
 
+def test_read_transition_times_handles_negative(monkeypatch):
+    from tzif_parser import tzif_body
+
+    class DummyDateTime:
+        @staticmethod
+        def fromtimestamp(*args, **kwargs):
+            raise OSError("boom")
+
+    monkeypatch.setattr(tzif_body, "datetime", DummyDateTime)
+
+    data = struct.pack(">2i", -1, 1)
+    buffer = io.BytesIO(data)
+    times = tzif_body.TimeZoneInfoBody._read_transition_times(buffer, 2, 1)
+    assert times[0] == datetime(1969, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+    assert times[1] == datetime(1970, 1, 1, 0, 0, 1, tzinfo=timezone.utc)
+
+
 @pytest.mark.parametrize(
     "utc_time, expected_offset",
     [
@@ -127,6 +146,16 @@ def test_resolve_preserves_fold_for_ambiguous_instants():
 
     assert first_res.utc_offset_secs == -4 * 3600
     assert second_res.utc_offset_secs == -5 * 3600
+
+
+def test_dst_difference_handles_non_hour():
+    tz_info = TimeZoneInfo.read("Australia/Lord_Howe")
+    diffs = {
+        transition.dst_difference_secs
+        for transition in tz_info.body.transitions
+        if transition.is_dst
+    }
+    assert 30 * 60 in diffs
 
 
 def test_read_invalid_timezone():
@@ -242,7 +271,34 @@ def test_read_timezone_without_posix_footer():
     assert tz_info.footer is None
     # Still usable for resolving instants
     res = tz_info.resolve(datetime(2025, 1, 1, tzinfo=timezone.utc))
-    assert res.utc_offset_secs == 0
+    expected = (
+        tz_info.body.leap_second_transitions[-1].correction
+        if tz_info.body.leap_second_transitions
+        else 0
+    )
+    assert res.utc_offset_secs == expected
+
+
+def test_right_utc_leap_seconds_affect_offsets():
+    tz_info = TimeZoneInfo.read("right/UTC")
+    before = tz_info.resolve(
+        datetime(1972, 6, 30, 23, 59, 30, tzinfo=timezone.utc)
+    )
+    after = tz_info.resolve(datetime(1972, 7, 1, 0, 0, 30, tzinfo=timezone.utc))
+
+    first_correction = tz_info.body.leap_second_transitions[0].correction
+    assert before.utc_offset_secs == 0
+    assert after.utc_offset_secs == first_correction
+
+
+def test_right_utc_next_transition_reports_leap():
+    tz_info = TimeZoneInfo.read("right/UTC")
+    res = tz_info.resolve(datetime(1972, 6, 30, 23, 59, 30, tzinfo=timezone.utc))
+    first_leap = tz_info.body.leap_second_transitions[0].transition_time
+    expected = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(
+        seconds=first_leap
+    )
+    assert res.next_transition == expected
 
 
 def test_resolve_uses_posix_footer_without_transitions():
@@ -270,9 +326,8 @@ def test_read_all():
         tz_info = TimeZoneInfo.read(timezone_name)
 
         assert tz_info.timezone_name == timezone_name
-        assert tz_info.filepath == os.path.join(
-            "/usr/share/zoneinfo", *timezone_name.split("/")
-        )
+        expected_path = os.path.join("/usr/share/zoneinfo", *timezone_name.split("/"))
+        assert os.path.realpath(tz_info.filepath) == os.path.realpath(expected_path)
         assert tz_info.version >= 2
 
         assert len(tz_info.body.transition_times) == tz_info.header.transitions_count
@@ -288,7 +343,10 @@ def test_read_all():
 
         assert len(tz_info.body.timezone_abbrevs) >= 1
 
-        assert len(tz_info.body.leap_second_transitions) == 0
+        assert (
+            len(tz_info.body.leap_second_transitions)
+            == tz_info.header.leap_second_transitions_count
+        )
 
 
 def test_find_transition_edges_new_york():

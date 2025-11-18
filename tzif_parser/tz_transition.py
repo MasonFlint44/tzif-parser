@@ -66,24 +66,31 @@ class TimeZoneTransition:
         if not self.is_dst:
             return 0
 
-        # previous
+        # Prefer the preceding standard ttinfo; fall back to next, then any non-DST entry.
+        std_tt: TimeTypeInfo | None = None
         if self._transition_index > 0:
             prev_tt = self._time_type_infos[
                 self._time_type_indices[self._transition_index - 1]
             ]
-            if prev_tt.is_dst:
-                return self.utc_offset_secs - prev_tt.utc_offset_secs
+            if not prev_tt.is_dst:
+                std_tt = prev_tt
 
-        # next
-        if self._transition_index + 1 < len(self._time_type_indices):
+        if std_tt is None and self._transition_index + 1 < len(self._time_type_indices):
             next_tt = self._time_type_infos[
                 self._time_type_indices[self._transition_index + 1]
             ]
-            if next_tt.is_dst:
-                return next_tt.utc_offset_secs - self.utc_offset_secs
+            if not next_tt.is_dst:
+                std_tt = next_tt
 
-        # fallback if neighbors aren't DST or next doesn't exist
-        return 3600
+        if std_tt is None:
+            std_tt = next(
+                (tti for tti in self._time_type_infos if not tti.is_dst), None
+            )
+
+        if std_tt is None:
+            return 0
+
+        return self.utc_offset_secs - std_tt.utc_offset_secs
 
     @property
     def dst_difference_hours(self) -> float:

@@ -1,11 +1,13 @@
 import bisect
 import struct
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import IO
 
 from .models import LeapSecondTransition, TimeTypeInfo
 from .tz_transition import TimeZoneTransition
 from .tzif_header import TimeZoneInfoHeader
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 # TODO: handle version 4 - first leap second can be neither -1 nor +1
@@ -62,6 +64,21 @@ class TimeZoneInfoBody:
             return None
         return index - 1
 
+    def find_leap_second_index(self, dt: datetime) -> int | None:
+        dt = (
+            dt.replace(tzinfo=timezone.utc)
+            if dt.tzinfo is None
+            else dt.astimezone(timezone.utc)
+        )
+        timestamps = [
+            _EPOCH + timedelta(seconds=ls.transition_time)
+            for ls in self.leap_second_transitions
+        ]
+        index = bisect.bisect_right(timestamps, dt)
+        if index == 0:
+            return None
+        return index - 1
+
     @classmethod
     def read(
         cls, file: IO[bytes], header_data: TimeZoneInfoHeader, version=1
@@ -113,7 +130,7 @@ class TimeZoneInfoBody:
     ) -> list[datetime]:
         fmt = f">{timecnt}q" if version >= 2 else f">{timecnt}i"
         raw = struct.unpack(fmt, file.read((8 if version >= 2 else 4) * timecnt))
-        return [datetime.fromtimestamp(t, tz=timezone.utc) for t in raw]
+        return [_EPOCH + timedelta(seconds=t) for t in raw]
 
     @classmethod
     def _read_time_type_indices(cls, file: IO[bytes], timecnt: int) -> list[int]:
