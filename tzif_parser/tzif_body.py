@@ -45,7 +45,12 @@ class TimeZoneInfoBody:
 
     @property
     def timezone_abbrevs(self) -> list[str]:
-        return self._timezone_abbrevs.rstrip("\x00").split("\x00")
+        seen: list[str] = []
+        for ttinfo in self.time_type_infos:
+            abbr = self.get_abbrev_by_index(ttinfo.abbrev_index)
+            if abbr not in seen:
+                seen.append(abbr)
+        return seen
 
     def get_abbrev_by_index(self, index: int) -> str:
         if index < 0 or index >= len(self._timezone_abbrevs):

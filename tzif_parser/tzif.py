@@ -70,6 +70,11 @@ class TimeZoneInfo:
         return resolution
 
     def _leap_correction_seconds(self, dt_utc: datetime, body: TimeZoneInfoBody) -> int:
+        if (
+            body.leap_second_expiration is not None
+            and dt_utc >= body.leap_second_expiration
+        ):
+            return 0
         idx = body.find_leap_second_index(dt_utc)
         if idx is None:
             return 0

@@ -7,7 +7,7 @@ from zoneinfo import available_timezones
 import pytest
 
 from tzif_parser import TimeZoneInfo
-from tzif_parser.models import TimeTypeInfo
+from tzif_parser.models import LeapSecondTransition, TimeTypeInfo
 from tzif_parser.posix import PosixTzDateTime, PosixTzInfo
 from tzif_parser.tzif_body import TimeZoneInfoBody
 from tzif_parser.tzif_header import TimeZoneInfoHeader
@@ -97,6 +97,45 @@ def _posix_only_timezone() -> TimeZoneInfo:
         header,
         body,
         posix_tz_info=posix_info,
+    )
+
+
+def _leap_expiring_timezone() -> TimeZoneInfo:
+    header = TimeZoneInfoHeader(
+        version=1,
+        is_utc_flag_count=1,
+        wall_standard_flag_count=1,
+        leap_second_transitions_count=3,
+        transitions_count=0,
+        local_time_type_count=1,
+        timezone_abbrev_byte_count=len("UTC\x00"),
+    )
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=[
+            LeapSecondTransition(transition_time=10, correction=1),
+            LeapSecondTransition(transition_time=20, correction=2),
+            LeapSecondTransition(transition_time=20, correction=2, is_expiration=True),
+        ],
+        time_type_infos=[
+            TimeTypeInfo(
+                utc_offset_secs=0,
+                is_dst=False,
+                abbrev_index=0,
+            )
+        ],
+        time_type_indices=[],
+        timezone_abbrevs="UTC\x00",
+        wall_standard_flags=[0],
+        is_utc_flags=[0],
+        leap_second_expiration=datetime(1970, 1, 1, tzinfo=timezone.utc)
+        + timedelta(seconds=20),
+    )
+    return TimeZoneInfo(
+        "Test/LeapExpiration",
+        "/tmp/Test/LeapExpiration",
+        header,
+        body,
     )
 
 
@@ -337,6 +376,18 @@ def test_right_utc_next_transition_reports_leap():
         seconds=first_leap
     )
     assert res.next_transition == expected
+
+
+def test_resolve_drops_leap_correction_after_expiration():
+    tz_info = _leap_expiring_timezone()
+    expiration = tz_info.body.leap_second_expiration
+    assert expiration is not None
+
+    before = expiration - timedelta(seconds=1)
+    after = expiration
+
+    assert tz_info.resolve(before).utc_offset_secs == 1
+    assert tz_info.resolve(after).utc_offset_secs == 0
 
 
 def test_resolve_uses_posix_footer_without_transitions():
@@ -719,3 +770,22 @@ def test_next_transition_after_last_transition_uses_posix_footer():
     assert res.next_transition == expected_next
     # Sanity: it’s in the future relative to the query instant
     assert res.next_transition > dt_utc.replace(tzinfo=timezone.utc)
+
+
+def test_timezone_abbrevs_include_midstring_indices():
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=[],
+        time_type_infos=[
+            TimeTypeInfo(utc_offset_secs=0, is_dst=False, abbrev_index=0),
+            TimeTypeInfo(utc_offset_secs=0, is_dst=False, abbrev_index=4),
+            TimeTypeInfo(utc_offset_secs=0, is_dst=True, abbrev_index=5),
+        ],
+        time_type_indices=[],
+        timezone_abbrevs="LMT\x00AHST\x00HDT\x00",
+        wall_standard_flags=[0, 0, 0],
+        is_utc_flags=[0, 0, 0],
+    )
+
+    # ensure the embedded 'HST' (offset 5) is surfaced even though it falls within another label
+    assert body.timezone_abbrevs == ["LMT", "AHST", "HST"]
