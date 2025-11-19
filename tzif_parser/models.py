@@ -36,6 +36,7 @@ class LeapSecondTransition:
 
     transition_time: int
     correction: int
+    is_expiration: bool = False
 
 
 @dataclass

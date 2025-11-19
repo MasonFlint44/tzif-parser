@@ -73,7 +73,12 @@ class TimeZoneInfo:
         idx = body.find_leap_second_index(dt_utc)
         if idx is None:
             return 0
-        return body.leap_second_transitions[idx].correction
+        leap = body.leap_second_transitions[idx]
+        if leap.is_expiration:
+            if idx == 0:
+                return 0
+            leap = body.leap_second_transitions[idx - 1]
+        return leap.correction
 
     def _next_leap_transition_utc(
         self, dt_utc: datetime, body: TimeZoneInfoBody
@@ -86,10 +91,15 @@ class TimeZoneInfo:
 
         if next_idx >= len(body.leap_second_transitions):
             return None
-        return (
-            _EPOCH
-            + timedelta(seconds=body.leap_second_transitions[next_idx].transition_time)
-        ).replace(tzinfo=timezone.utc)
+        while next_idx < len(body.leap_second_transitions):
+            candidate = body.leap_second_transitions[next_idx]
+            if not candidate.is_expiration:
+                return (
+                    _EPOCH
+                    + timedelta(seconds=candidate.transition_time)
+                ).replace(tzinfo=timezone.utc)
+            next_idx += 1
+        return None
 
     def _merge_leap_transition(
         self,

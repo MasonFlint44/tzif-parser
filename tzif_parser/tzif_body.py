@@ -10,8 +10,6 @@ from .tzif_header import TimeZoneInfoHeader
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
-# TODO: handle version 4 - first leap second can be neither -1 nor +1
-# TODO: handle version 4 - if the last leap second transition matches the previous, the last entry represents the expiration of the leap second table rather than a leap second
 class TimeZoneInfoBody:
     def __init__(
         self,
@@ -22,6 +20,7 @@ class TimeZoneInfoBody:
         timezone_abbrevs: str,
         wall_standard_flags: list[int],
         is_utc_flags: list[int],
+        leap_second_expiration: datetime | None = None,
     ) -> None:
         self.transition_times = transition_times
         self.leap_second_transitions = leap_second_transitions
@@ -30,6 +29,7 @@ class TimeZoneInfoBody:
         self._timezone_abbrevs = timezone_abbrevs
         self.wall_standard_flags = wall_standard_flags
         self.is_utc_flags = is_utc_flags
+        self.leap_second_expiration = leap_second_expiration
         self.transitions = [
             TimeZoneTransition(
                 transition_time,
@@ -104,7 +104,10 @@ class TimeZoneInfoBody:
         )
 
         # Parse leap second data
-        leap_second_transitions = cls._read_leap_seconds(
+        (
+            leap_second_transitions,
+            leap_second_expiration,
+        ) = cls._read_leap_seconds(
             file, header_data.leap_second_transitions_count, version
         )
 
@@ -122,6 +125,7 @@ class TimeZoneInfoBody:
             timezone_abbrevs,
             wall_standard_flags,
             is_utc_flags,
+            leap_second_expiration=leap_second_expiration,
         )
 
     @classmethod
@@ -156,16 +160,27 @@ class TimeZoneInfoBody:
     @classmethod
     def _read_leap_seconds(
         cls, file: IO[bytes], count: int, version: int
-    ) -> list[LeapSecondTransition]:
+    ) -> tuple[list[LeapSecondTransition], datetime | None]:
         # Each leap-second entry is a pair: (transition_time, correction)
         if count == 0:
-            return []
+            return [], None
+
         fmt = ">qi" if version >= 2 else ">ii"
         size = struct.calcsize(fmt)
-        return [
+        leaps = [
             LeapSecondTransition(*struct.unpack(fmt, file.read(size)))
             for _ in range(count)
         ]
+
+        expiration: datetime | None = None
+        if version >= 4 and len(leaps) >= 2:
+            last = leaps[-1]
+            previous = leaps[-2]
+            if last.transition_time == previous.transition_time:
+                last.is_expiration = True
+                expiration = _EPOCH + timedelta(seconds=last.transition_time)
+
+        return leaps, expiration
 
     @classmethod
     def _read_indicators(cls, file: IO[bytes], count: int) -> list[int]:
@@ -175,6 +190,7 @@ class TimeZoneInfoBody:
         return (
             f"TimeZoneInfoBody(transition_times={self.transition_times!r}, "
             f"leap_second_transitions={self.leap_second_transitions!r}, "
+            f"leap_second_expiration={self.leap_second_expiration!r}, "
             f"time_type_infos={self.time_type_infos!r}, "
             f"time_type_indices={self.time_type_indices!r}, "
             f"timezone_abbrevs={self._timezone_abbrevs!r}, "

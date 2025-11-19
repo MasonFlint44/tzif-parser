@@ -117,6 +117,44 @@ def test_read_transition_times_handles_negative(monkeypatch):
     assert times[1] == datetime(1970, 1, 1, 0, 0, 1, tzinfo=timezone.utc)
 
 
+def test_posix_transition_time_supports_extended_hours():
+    late = PosixTzDateTime(3, 2, 0, 26, 0, 0).to_datetime(2024)
+    early = PosixTzDateTime(3, 2, 0, -2, 30, 0).to_datetime(2024)
+
+    assert late == datetime(2024, 3, 11, 2, 0, 0)
+    assert early == datetime(2024, 3, 9, 22, 30, 0)
+
+
+def test_posix_parser_allows_comma_in_abbreviation():
+    buffer = io.BytesIO(b"\n<UTC+05,30>-5:30\n")
+    info = PosixTzInfo.read(buffer)
+
+    assert info is not None
+    assert info.standard_abbrev == "UTC+05,30"
+    assert info.utc_offset_secs == 5 * 3600 + 30 * 60
+
+
+def test_read_leap_seconds_marks_expiration_entry():
+    data = struct.pack(
+        ">qi",
+        100,
+        1,
+    ) + struct.pack(
+        ">qi",
+        100,
+        1,
+    )
+    buffer = io.BytesIO(data)
+    leaps, expiration = TimeZoneInfoBody._read_leap_seconds(buffer, 2, 4)
+
+    assert len(leaps) == 2
+    assert leaps[0].is_expiration is False
+    assert leaps[1].is_expiration is True
+    assert expiration == datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(
+        seconds=100
+    )
+
+
 @pytest.mark.parametrize(
     "utc_time, expected_offset",
     [

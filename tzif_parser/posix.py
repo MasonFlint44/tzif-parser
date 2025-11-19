@@ -76,9 +76,43 @@ class PosixTzDateTime:
             back = (last_wd - py_weekday) % 7
             target = last_of_month - timedelta(days=back)
 
-        return target.replace(
-            hour=self.hour, minute=self.minute, second=self.second, microsecond=0
-        )
+        target = target.replace(hour=0, minute=0, second=0, microsecond=0)
+        offset = timedelta(hours=self.hour, minutes=self.minute, seconds=self.second)
+        return target + offset
+
+
+def _split_posix_sections(posix_bytes: bytes) -> tuple[bytes, bytes, bytes]:
+    sections: list[bytes] = []
+    current = bytearray()
+    depth = 0
+
+    for b in posix_bytes:
+        if b == ord("<"):
+            depth += 1
+        elif b == ord(">"):
+            if depth == 0:
+                raise ValueError("Unmatched '>' in POSIX TZ string")
+            depth -= 1
+        elif b == ord(",") and depth == 0:
+            sections.append(bytes(current))
+            current.clear()
+            continue
+
+        current.append(b)
+
+    if depth != 0:
+        raise ValueError("Unmatched '<' in POSIX TZ string")
+
+    sections.append(bytes(current))
+
+    if len(sections) == 1:
+        return sections[0], b"", b""
+    if len(sections) == 2:
+        return sections[0], sections[1], b""
+    if len(sections) == 3:
+        return sections[0], sections[1], sections[2]
+
+    raise ValueError("Too many comma-separated sections in POSIX TZ string")
 
 
 @dataclass
@@ -125,19 +159,15 @@ class PosixTzInfo:
         if not posix_string:
             return None
 
-        local_tz, dst_start, dst_end = (
-            posix_string.split(b",")
-            if b"," in posix_string
-            else (posix_string, b"", b"")
-        )
+        local_tz, dst_start, dst_end = _split_posix_sections(posix_string)
 
         local_tz_parser = re.compile(
             r"""
-            (?P<std>[^<0-9:.+-]+|<[a-zA-Z0-9+-]+>)
+            (?P<std>[^<0-9:.+-]+|<[^>]+>)
             (?:
                 (?P<stdoff>[+-]?\d{1,3}(?::\d{2}(?::\d{2})?)?)
                 (?:
-                    (?P<dst>[^0-9:.+-]+|<[a-zA-Z0-9+-]+>)
+                    (?P<dst>[^0-9:.+-]+|<[^>]+>)
                     (?P<dstoff>[+-]?\d{1,3}(?::\d{2}(?::\d{2})?)?)?
                 )? # dst
             )? # stdoff
