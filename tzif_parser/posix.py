@@ -273,7 +273,7 @@ class PosixTzInfo:
                 raise ValueError(f"<n> must be 0..365: {posix_datetime}")
             return PosixTzOrdinalDateTime(n, *trans_time)
 
-        return None
+        raise ValueError(f"Invalid dst start/end date: {posix_datetime}")
 
     @classmethod
     def _read_dst_transition_time(cls, time_str):

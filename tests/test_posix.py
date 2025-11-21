@@ -1,3 +1,4 @@
+import io
 from dataclasses import asdict
 from datetime import datetime
 
@@ -160,3 +161,9 @@ def test_read_dst_transition_datetime(expr, expected_type, expected_tuple):
 def test_read_dst_transition_datetime_invalid(bad):
     with pytest.raises(ValueError):
         PosixTzInfo._read_dst_transition_datetime(bad)
+
+
+def test_posix_parser_rejects_unknown_dst_sections():
+    buffer = io.BytesIO(b"\nEST5EDT,foo,bar\n")
+    with pytest.raises(ValueError):
+        PosixTzInfo.read(buffer)

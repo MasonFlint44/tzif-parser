@@ -33,7 +33,7 @@ print(tz_info.header)
 print(tz_info.body)
 print(tz_info.footer)
 
-current_transition = tz_info.body.find_transition(datetime.now())
+current_transition_index = tz_info.body.find_transition_index(datetime.now())
 ```
 
 ## Classes

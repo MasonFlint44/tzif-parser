@@ -1,7 +1,10 @@
 import os
+import sysconfig
 from collections import namedtuple
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from importlib import resources
+from typing import IO
 
 from .models import TimeZoneResolution
 from .posix import PosixTzInfo
@@ -430,46 +433,61 @@ class TimeZoneInfo:
         return self.resolve(dt).next_transition
 
     @classmethod
+    def _read_from_fileobj(
+        cls, file: IO[bytes], timezone_name: str, filepath: str
+    ) -> "TimeZoneInfo":
+        header_data = TimeZoneInfoHeader.read(file)
+        body_data = TimeZoneInfoBody.read(file, header_data)
+        if header_data.version < 2:
+            return cls(timezone_name, filepath, header_data, body_data)
+
+        v2_header_data = TimeZoneInfoHeader.read(file)
+        v2_body_data = TimeZoneInfoBody.read(file, v2_header_data, v2_header_data.version)
+        v2_posix_string = PosixTzInfo.read(file)
+
+        return cls(
+            timezone_name,
+            filepath,
+            header_data,
+            body_data,
+            v2_header_data,
+            v2_body_data,
+            v2_posix_string,
+        )
+
+    @classmethod
     def read(cls, timezone_name: str):
-        timezone_dir = os.environ.get("TZDIR", "/usr/share/zoneinfo")
-        timezone_dir = os.path.realpath(timezone_dir)
-        normalized_name = os.path.normpath(timezone_name)
-        if (
-            not normalized_name
-            or normalized_name in (os.curdir, os.pardir)
-            or normalized_name.startswith("..")
-            or os.path.isabs(normalized_name)
-        ):
-            raise ValueError(f"Invalid timezone name: {timezone_name!r}")
-
-        filepath = os.path.realpath(os.path.join(timezone_dir, normalized_name))
-        try:
-            common = os.path.commonpath([timezone_dir, filepath])
-        except ValueError:
-            raise ValueError(f"Invalid timezone name: {timezone_name!r}") from None
-        if common != timezone_dir:
-            raise ValueError(f"Invalid timezone name: {timezone_name!r}")
-        with open(filepath, "rb") as file:
-            header_data = TimeZoneInfoHeader.read(file)
-            body_data = TimeZoneInfoBody.read(file, header_data)
-            if header_data.version < 2:
-                return cls(timezone_name, filepath, header_data, body_data)
-
-            v2_header_data = TimeZoneInfoHeader.read(file)
-            v2_body_data = TimeZoneInfoBody.read(
-                file, v2_header_data, v2_header_data.version
+        if os.path.isabs(timezone_name):
+            raise ValueError(
+                "Absolute paths are not allowed in TimeZoneInfo.read(); use from_path() instead."
             )
-            v2_posix_string = PosixTzInfo.read(file)
 
-            return cls(
-                timezone_name,
-                filepath,
-                header_data,
-                body_data,
-                v2_header_data,
-                v2_body_data,
-                v2_posix_string,
-            )
+        normalized_name = cls._validate_timezone_key(timezone_name)
+
+        search_paths: list[str] = []
+        tzdir_override = os.environ.get("TZDIR")
+        if tzdir_override:
+            search_paths.append(os.path.realpath(tzdir_override))
+        search_paths.extend(cls._compute_default_tzpath())
+
+        for tz_root in search_paths:
+            candidate = os.path.join(tz_root, normalized_name)
+            if os.path.isfile(candidate):
+                real = os.path.realpath(candidate)
+                with open(real, "rb") as file:
+                    return cls._read_from_fileobj(file, timezone_name, real)
+
+        # Fallback to tzdata package if present
+        file = cls._load_tzdata_from_package(normalized_name)
+        with file as f:
+            return cls._read_from_fileobj(f, timezone_name, f"tzdata:{normalized_name}")
+
+    @classmethod
+    def from_path(cls, path: str, timezone_name: str | None = None) -> "TimeZoneInfo":
+        """Read a TZif file directly from an absolute filesystem path."""
+        real = os.path.realpath(path)
+        with open(real, "rb") as file:
+            return cls._read_from_fileobj(file, timezone_name or real, real)
 
     def __repr__(self) -> str:
         return (
@@ -481,3 +499,44 @@ class TimeZoneInfo:
             f"v2_body_data={self._v2_body_data!r}, "
             f"posix_tz_info={self._posix_tz_info!r})"
         )
+
+    @staticmethod
+    def _compute_default_tzpath() -> tuple[str, ...]:
+        env_var = os.environ.get("PYTHONTZPATH") or sysconfig.get_config_var("TZPATH")
+        if env_var:
+            return tuple(filter(os.path.isabs, env_var.split(os.pathsep)))
+
+        # Fallback paths align with CPython's defaults
+        return (
+            "/usr/share/zoneinfo",
+            "/usr/share/lib/zoneinfo",
+            "/etc/zoneinfo",
+        )
+
+    @staticmethod
+    def _validate_timezone_key(key: str) -> str:
+        if os.path.isabs(key):
+            raise ValueError("Absolute paths are not allowed as timezone keys")
+
+        # Normalize and ensure the normalized form does not change length (prevents ../)
+        normalized = os.path.normpath(key)
+        if len(normalized) != len(key) or normalized in (os.curdir, os.pardir, ""):
+            raise ValueError(f"Invalid timezone name: {key!r}")
+
+        # Ensure the path stays within a sentinel base
+        _base = os.path.normpath(os.path.join("_", "_"))[:-1]
+        resolved = os.path.normpath(os.path.join(_base, normalized))
+        if not resolved.startswith(_base):
+            raise ValueError(f"Invalid timezone name: {key!r}")
+
+        return normalized
+
+    @staticmethod
+    def _load_tzdata_from_package(key: str) -> IO[bytes]:
+        components = key.split("/")
+        package_name = ".".join(["tzdata.zoneinfo"] + components[:-1])
+        resource_name = components[-1]
+        try:
+            return resources.files(package_name).joinpath(resource_name).open("rb")
+        except (ImportError, FileNotFoundError, UnicodeEncodeError) as exc:
+            raise FileNotFoundError(f"No time zone found with key {key!r}") from exc
