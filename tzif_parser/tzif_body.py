@@ -11,6 +11,18 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 class TimeZoneInfoBody:
+    @staticmethod
+    def _to_datetime_clamped(seconds: int) -> datetime:
+        """Convert epoch seconds to datetime, clamping overflow to min/max."""
+        try:
+            return _EPOCH + timedelta(seconds=seconds)
+        except OverflowError:
+            return (
+                datetime.max.replace(tzinfo=timezone.utc)
+                if seconds > 0
+                else datetime.min.replace(tzinfo=timezone.utc)
+            )
+
     def __init__(
         self,
         transition_times: list[datetime],
@@ -76,7 +88,7 @@ class TimeZoneInfoBody:
             else dt.astimezone(timezone.utc)
         )
         timestamps = [
-            _EPOCH + timedelta(seconds=ls.transition_time)
+            self._to_datetime_clamped(ls.transition_time)
             for ls in self.leap_second_transitions
         ]
         index = bisect.bisect_right(timestamps, dt)
@@ -144,14 +156,7 @@ class TimeZoneInfoBody:
         # extreme timestamp cannot break parsing of the rest of the file.
         converted: list[datetime] = []
         for seconds in raw:
-            try:
-                converted.append(_EPOCH + timedelta(seconds=seconds))
-            except OverflowError:
-                converted.append(
-                    datetime.max.replace(tzinfo=timezone.utc)
-                    if seconds > 0
-                    else datetime.min.replace(tzinfo=timezone.utc)
-                )
+            converted.append(cls._to_datetime_clamped(seconds))
         return converted
 
     @classmethod
@@ -196,7 +201,7 @@ class TimeZoneInfoBody:
             previous = leaps[-2]
             if last.transition_time == previous.transition_time:
                 last.is_expiration = True
-                expiration = _EPOCH + timedelta(seconds=last.transition_time)
+                expiration = cls._to_datetime_clamped(last.transition_time)
 
         return leaps, expiration
 

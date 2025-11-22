@@ -205,6 +205,29 @@ def test_read_leap_seconds_marks_expiration_entry():
     )
 
 
+def test_read_leap_seconds_clamps_out_of_range():
+    big = 10**12  # far beyond datetime range
+    data = struct.pack(">qi", big, 1) + struct.pack(">qi", big, 1)
+    buffer = io.BytesIO(data)
+    leaps, expiration = TimeZoneInfoBody._read_leap_seconds(buffer, 2, 4)
+
+    assert expiration == datetime.max.replace(tzinfo=timezone.utc)
+
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=leaps,
+        time_type_infos=[TimeTypeInfo(utc_offset_secs=0, is_dst=False, abbrev_index=0)],
+        time_type_indices=[],
+        timezone_abbrevs="UTC\x00",
+        wall_standard_flags=[0],
+        is_utc_flags=[0],
+        leap_second_expiration=expiration,
+    )
+
+    # Should not raise OverflowError when locating leap seconds
+    assert body.find_leap_second_index(datetime.max.replace(tzinfo=timezone.utc)) == 1
+
+
 @pytest.mark.parametrize(
     "utc_time, expected_offset",
     [
