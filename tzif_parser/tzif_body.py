@@ -139,7 +139,20 @@ class TimeZoneInfoBody:
     ) -> list[datetime]:
         fmt = f">{timecnt}q" if version >= 2 else f">{timecnt}i"
         raw = struct.unpack(fmt, file.read((8 if version >= 2 else 4) * timecnt))
-        return [_EPOCH + timedelta(seconds=t) for t in raw]
+
+        # Convert to datetimes, clamping any out-of-range values so a single
+        # extreme timestamp cannot break parsing of the rest of the file.
+        converted: list[datetime] = []
+        for seconds in raw:
+            try:
+                converted.append(_EPOCH + timedelta(seconds=seconds))
+            except OverflowError:
+                converted.append(
+                    datetime.max.replace(tzinfo=timezone.utc)
+                    if seconds > 0
+                    else datetime.min.replace(tzinfo=timezone.utc)
+                )
+        return converted
 
     @classmethod
     def _read_time_type_indices(cls, file: IO[bytes], timecnt: int) -> list[int]:

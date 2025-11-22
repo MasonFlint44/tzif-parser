@@ -157,6 +157,16 @@ def test_read_transition_times_handles_negative(monkeypatch):
     assert times[1] == datetime(1970, 1, 1, 0, 0, 1, tzinfo=timezone.utc)
 
 
+def test_read_transition_times_clamps_out_of_range():
+    # Far-future/past timestamps that overflow datetime should not abort parsing.
+    data = struct.pack(">2q", 10**12, -10**12)  # way beyond datetime limits
+    buffer = io.BytesIO(data)
+    times = TimeZoneInfoBody._read_transition_times(buffer, 2, 2)
+
+    assert times[0] == datetime.max.replace(tzinfo=timezone.utc)
+    assert times[1] == datetime.min.replace(tzinfo=timezone.utc)
+
+
 def test_posix_transition_time_supports_extended_hours():
     late = PosixTzDateTime(3, 2, 0, 26, 0, 0).to_datetime(2024)
     early = PosixTzDateTime(3, 2, 0, -2, 30, 0).to_datetime(2024)
