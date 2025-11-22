@@ -12,7 +12,7 @@ from .tzif_body import TimeZoneInfoBody
 from .tzif_header import TimeZoneInfoHeader
 
 TimeZoneResolutionCache = namedtuple(
-    "TimeZoneResolutionCache", ["resolution_time", "resolution"]
+    "TimeZoneResolutionCache", ["cache_key", "resolution"]
 )
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -67,9 +67,9 @@ class TimeZoneInfo:
         return self._posix_tz_info
 
     def _cache_last_resolution(
-        self, dt_utc: datetime, resolution: TimeZoneResolution
+        self, cache_key: datetime, resolution: TimeZoneResolution
     ) -> TimeZoneResolution:
-        self._last_resolution = TimeZoneResolutionCache(dt_utc, resolution)
+        self._last_resolution = TimeZoneResolutionCache(cache_key, resolution)
         return resolution
 
     def _leap_correction_seconds(self, dt_utc: datetime, body: TimeZoneInfoBody) -> int:
@@ -102,10 +102,9 @@ class TimeZoneInfo:
         while next_idx < len(body.leap_second_transitions):
             candidate = body.leap_second_transitions[next_idx]
             if not candidate.is_expiration:
-                return (
-                    _EPOCH
-                    + timedelta(seconds=candidate.transition_time)
-                ).replace(tzinfo=timezone.utc)
+                return (_EPOCH + timedelta(seconds=candidate.transition_time)).replace(
+                    tzinfo=timezone.utc
+                )
             next_idx += 1
         return None
 
@@ -212,21 +211,28 @@ class TimeZoneInfo:
         naive local wall `local_time`, and `next_transition` as the UTC datetime
         of the next transition if one is known.
         """
-        # Normalize to whole seconds to improve cache hits (preserve fold info)
         if dt.tzinfo is None:
-            dt_utc = dt.replace(tzinfo=timezone.utc, microsecond=0)
+            dt_utc_full = dt.replace(tzinfo=timezone.utc)
         else:
-            dt_no_subsec = dt.replace(microsecond=0, fold=dt.fold)
-            dt_utc = dt_no_subsec.astimezone(timezone.utc)
+            dt_utc_full = dt.astimezone(timezone.utc)
+
+        # Normalize to whole seconds for cache key; keep the original timestamp in outputs.
+        dt_utc_key = dt_utc_full.replace(microsecond=0, fold=dt_utc_full.fold)
 
         # Check cache
         if self._last_resolution is not None:
-            cached_dt_utc: datetime = self._last_resolution.resolution_time
+            cached_dt_utc: datetime = self._last_resolution.cache_key
             cached_res: TimeZoneResolution = self._last_resolution.resolution
 
             # Exact match: fast path
-            if cached_dt_utc == dt_utc:
-                return cached_res
+            if cached_dt_utc == dt_utc_key:
+                off = cached_res.utc_offset_secs
+                local = (dt_utc_full + timedelta(seconds=off)).replace(tzinfo=None)
+                return replace(
+                    cached_res,
+                    resolution_time=dt_utc_full,
+                    local_time=local,
+                )
 
             next_transition = cached_res.next_transition
 
@@ -235,19 +241,20 @@ class TimeZoneInfo:
             # and the next_transition.
             if (
                 next_transition is not None
-                and cached_dt_utc <= dt_utc < next_transition
+                and cached_dt_utc <= dt_utc_key < next_transition
             ):
                 off = cached_res.utc_offset_secs
-                local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+                local = (dt_utc_full + timedelta(seconds=off)).replace(tzinfo=None)
 
                 # Build a new resolution for this dt_utc, but reuse the same offset,
                 # DST flag, abbr, delta, and next_transition.
                 return replace(
                     cached_res,
-                    resolution_time=dt_utc,
+                    resolution_time=dt_utc_full,
                     local_time=local,
                 )
 
+        dt_utc = dt_utc_full
         body = self.body
         leap_corr = self._leap_correction_seconds(dt_utc, body)
 
@@ -277,10 +284,10 @@ class TimeZoneInfo:
             )
 
             return self._cache_last_resolution(
-                dt_utc,
+                dt_utc_key,
                 TimeZoneResolution(
                     self.timezone_name,
-                    dt_utc,
+                    dt_utc_full,
                     local,
                     effective_off,
                     in_dst,
@@ -310,10 +317,10 @@ class TimeZoneInfo:
             )
 
             return self._cache_last_resolution(
-                dt_utc,
+                dt_utc_key,
                 TimeZoneResolution(
                     self.timezone_name,
-                    dt_utc,
+                    dt_utc_full,
                     local,
                     effective_off,
                     tt.is_dst,
@@ -350,10 +357,10 @@ class TimeZoneInfo:
             next_transition = self._merge_leap_transition(next_transition, dt_utc, body)
 
             return self._cache_last_resolution(
-                dt_utc,
+                dt_utc_key,
                 TimeZoneResolution(
                     self.timezone_name,
-                    dt_utc,
+                    dt_utc_full,
                     local,
                     effective_off,
                     tr.is_dst,
@@ -379,10 +386,10 @@ class TimeZoneInfo:
             )
 
             return self._cache_last_resolution(
-                dt_utc,
+                dt_utc_key,
                 TimeZoneResolution(
                     self.timezone_name,
-                    dt_utc,
+                    dt_utc_full,
                     local,
                     effective_off,
                     in_dst,
@@ -400,10 +407,10 @@ class TimeZoneInfo:
         next_transition = self._merge_leap_transition(None, dt_utc, body)
 
         return self._cache_last_resolution(
-            dt_utc,
+            dt_utc_key,
             TimeZoneResolution(
                 self.timezone_name,
-                dt_utc,
+                dt_utc_full,
                 local,
                 effective_off,
                 last.is_dst,
@@ -442,7 +449,9 @@ class TimeZoneInfo:
             return cls(timezone_name, filepath, header_data, body_data)
 
         v2_header_data = TimeZoneInfoHeader.read(file)
-        v2_body_data = TimeZoneInfoBody.read(file, v2_header_data, v2_header_data.version)
+        v2_body_data = TimeZoneInfoBody.read(
+            file, v2_header_data, v2_header_data.version
+        )
         v2_posix_string = PosixTzInfo.read(file)
 
         return cls(
@@ -504,7 +513,7 @@ class TimeZoneInfo:
     def _compute_default_tzpath() -> tuple[str, ...]:
         env_var = os.environ.get("PYTHONTZPATH") or sysconfig.get_config_var("TZPATH")
         if env_var:
-            return tuple(filter(os.path.isabs, env_var.split(os.pathsep)))
+            return tuple(path for path in env_var.split(os.pathsep) if path)
 
         # Fallback paths align with CPython's defaults
         return (

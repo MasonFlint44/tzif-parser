@@ -1,5 +1,6 @@
 import io
 import os
+import shutil
 import struct
 from datetime import datetime, timedelta, timezone
 from zoneinfo import available_timezones
@@ -247,6 +248,20 @@ def test_read_rejects_path_traversal():
         TimeZoneInfo.read("/absolute/path")
 
 
+def test_pythontzpath_allows_relative_paths(monkeypatch, tmp_path):
+    src = "/usr/share/zoneinfo/Etc/UTC"
+    etc_dir = tmp_path / "relative_zones" / "Etc"
+    etc_dir.mkdir(parents=True)
+    dest = etc_dir / "UTC"
+    shutil.copy(src, dest)
+
+    rel_root = os.path.relpath(tmp_path / "relative_zones", os.getcwd())
+    monkeypatch.setenv("PYTHONTZPATH", rel_root)
+
+    tz_info = TimeZoneInfo.read("Etc/UTC")
+    assert os.path.realpath(tz_info.filepath) == os.path.realpath(dest)
+
+
 def test_read_transitions():
     timezones = available_timezones()
 
@@ -406,6 +421,28 @@ def test_resolve_uses_posix_footer_without_transitions():
     assert summer_res.is_dst is True
     assert summer_res.abbreviation == "DST"
     assert summer_res.dst_difference_secs == 3600
+
+
+def test_resolve_preserves_microseconds_through_cache():
+    tz_info = _posix_only_timezone()
+    dt_first = datetime(2025, 1, 15, 0, 0, 0, 123456, tzinfo=timezone.utc)
+    dt_second = dt_first.replace(microsecond=999999)
+
+    first = tz_info.resolve(dt_first)
+    second = tz_info.resolve(dt_second)
+
+    assert first.resolution_time == dt_first
+    expected_first_local = (dt_first + timedelta(seconds=first.utc_offset_secs)).replace(
+        tzinfo=None
+    )
+    assert first.local_time == expected_first_local
+
+    assert second.resolution_time == dt_second
+    expected_second_local = (
+        dt_second + timedelta(seconds=second.utc_offset_secs)
+    ).replace(tzinfo=None)
+    assert second.local_time == expected_second_local
+    assert second.utc_offset_secs == first.utc_offset_secs
 
 
 def test_read_all():
