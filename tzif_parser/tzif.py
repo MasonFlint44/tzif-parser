@@ -72,6 +72,36 @@ class TimeZoneInfo:
         self._last_resolution = TimeZoneResolutionCache(cache_key, resolution)
         return resolution
 
+    @staticmethod
+    def _initial_tt_state(
+        body: TimeZoneInfoBody,
+    ) -> tuple[int, int, str | None, bool]:
+        """
+        Pick the standard ttinfo if present (otherwise the first ttinfo) and
+        return its offset, dst delta, abbreviation, and dst flag.
+        """
+        std = next((x for x in body.time_type_infos if not x.is_dst), None)
+        tt = std if std is not None else body.time_type_infos[0]
+        delta = (
+            (tt.utc_offset_secs - std.utc_offset_secs) if (tt.is_dst and std) else 0
+        )
+        abbr = body.get_abbrev_by_index(tt.abbrev_index)
+        return tt.utc_offset_secs, delta, abbr, tt.is_dst
+
+    @staticmethod
+    def _posix_offsets(posix_info: PosixTzInfo) -> tuple[int, int, int]:
+        """
+        Return (standard offset, dst offset, dst delta) in seconds
+        derived from a PosixTzInfo footer.
+        """
+        std = posix_info.utc_offset_secs
+        dst_offset = (
+            posix_info.dst_offset_secs
+            if posix_info.dst_offset_secs is not None
+            else std + 3600
+        )
+        return std, dst_offset, dst_offset - std
+
     def _posix_footer_state(
         self, dt_utc: datetime
     ) -> tuple[int, int, str | None, bool] | None:
@@ -79,9 +109,7 @@ class TimeZoneInfo:
         if f is None:
             return None
 
-        std = f.utc_offset_secs
-        dst_offset = f.dst_offset_secs if f.dst_offset_secs is not None else std + 3600
-        dst_delta = dst_offset - std
+        std, dst_offset, dst_delta = self._posix_offsets(f)
 
         # POSIX rules compare using naive local wall time in standard offset
         local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
@@ -119,9 +147,8 @@ class TimeZoneInfo:
         if f.dst_start is None or f.dst_end is None:
             return None
 
-        std = f.utc_offset_secs
-        dst_offset = f.dst_offset_secs if f.dst_offset_secs is not None else std + 3600
-        dst_delta = timedelta(seconds=dst_offset - std)
+        std, dst_offset, dst_delta = self._posix_offsets(f)
+        dst_delta_td = timedelta(seconds=dst_delta)
 
         # Work in "standard-time local wall clock" coordinates, same as resolve()
         std_delta = timedelta(seconds=std)
@@ -142,7 +169,7 @@ class TimeZoneInfo:
             if start_y > local_std:
                 candidates.append((start_y, start_y, std))
 
-            end_y_std = end_y_dst - dst_delta
+            end_y_std = end_y_dst - dst_delta_td
             if end_y_std > local_std:
                 candidates.append((end_y_std, end_y_dst, dst_offset))
 
@@ -186,12 +213,12 @@ class TimeZoneInfo:
         of the next transition if one is known.
         """
         if dt.tzinfo is None:
-            dt_utc_full = dt.replace(tzinfo=timezone.utc)
+            dt_utc = dt.replace(tzinfo=timezone.utc)
         else:
-            dt_utc_full = dt.astimezone(timezone.utc)
+            dt_utc = dt.astimezone(timezone.utc)
 
         # Normalize to whole seconds for cache key; keep the original timestamp in outputs.
-        dt_utc_key = dt_utc_full.replace(microsecond=0, fold=dt_utc_full.fold)
+        dt_utc_key = dt_utc.replace(microsecond=0, fold=dt_utc.fold)
 
         # Check cache
         if self._last_resolution is not None:
@@ -201,10 +228,10 @@ class TimeZoneInfo:
             # Exact match: fast path
             if cached_dt_utc == dt_utc_key:
                 off = cached_res.utc_offset_secs
-                local = (dt_utc_full + timedelta(seconds=off)).replace(tzinfo=None)
+                local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
                 return replace(
                     cached_res,
-                    resolution_time=dt_utc_full,
+                    resolution_time=dt_utc,
                     local_time=local,
                 )
 
@@ -218,47 +245,33 @@ class TimeZoneInfo:
                 and cached_dt_utc <= dt_utc_key < next_transition
             ):
                 off = cached_res.utc_offset_secs
-                local = (dt_utc_full + timedelta(seconds=off)).replace(tzinfo=None)
+                local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
 
                 # Build a new resolution for this dt_utc, but reuse the same offset,
                 # DST flag, abbr, delta, and next_transition.
                 return replace(
                     cached_res,
-                    resolution_time=dt_utc_full,
+                    resolution_time=dt_utc,
                     local_time=local,
                 )
 
-        dt_utc = dt_utc_full
         body = self.body
 
         # Case 0: No transitions at all => single ttinfo applies
         if not body.transitions:
             posix_state = self._posix_footer_state(dt_utc)
-            if posix_state is not None:
-                off, delta, abbr, in_dst = posix_state
-            else:
-                std = next((x for x in body.time_type_infos if not x.is_dst), None)
-                tt = std if std is not None else body.time_type_infos[0]
-                delta = (
-                    (tt.utc_offset_secs - std.utc_offset_secs)
-                    if (tt.is_dst and std)
-                    else 0
-                )
-                off = tt.utc_offset_secs
-                abbr = body.get_abbrev_by_index(tt.abbrev_index)
-                in_dst = tt.is_dst
+            off, delta, abbr, in_dst = posix_state or self._initial_tt_state(body)
 
-            effective_off = off
-            local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
+            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
             next_transition = self._next_posix_transition_utc(dt_utc)
 
             return self._cache_last_resolution(
                 dt_utc_key,
                 TimeZoneResolution(
                     self.timezone_name,
-                    dt_utc_full,
+                    dt_utc,
                     local,
-                    effective_off,
+                    off,
                     in_dst,
                     abbr,
                     delta,
@@ -271,15 +284,8 @@ class TimeZoneInfo:
 
         # Case 1: Before first transition
         if dt_utc < first.transition_time_utc:
-            std = next((x for x in body.time_type_infos if not x.is_dst), None)
-            tt = std if std is not None else body.time_type_infos[0]
-            delta = (
-                (tt.utc_offset_secs - std.utc_offset_secs) if (tt.is_dst and std) else 0
-            )
-            off = tt.utc_offset_secs
-            abbr = body.get_abbrev_by_index(tt.abbrev_index)
-            effective_off = off
-            local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
+            off, delta, abbr, in_dst = self._initial_tt_state(body)
+            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
 
             next_transition = self._next_meaningful_body_transition(
                 body, 0, off, delta, abbr
@@ -289,10 +295,10 @@ class TimeZoneInfo:
                 dt_utc_key,
                 TimeZoneResolution(
                     self.timezone_name,
-                    dt_utc_full,
+                    dt_utc,
                     local,
-                    effective_off,
-                    tt.is_dst,
+                    off,
+                    in_dst,
                     abbr,
                     delta,
                     next_transition=next_transition,
@@ -307,8 +313,7 @@ class TimeZoneInfo:
             tr = body.transitions[tr_index]
             off = tr.utc_offset_secs
             delta = tr.dst_difference_secs if tr.is_dst else 0
-            effective_off = off
-            local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
+            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
 
             # Next body transition, if there is one.
             next_transition = self._next_meaningful_body_transition(
@@ -323,9 +328,9 @@ class TimeZoneInfo:
                 dt_utc_key,
                 TimeZoneResolution(
                     self.timezone_name,
-                    dt_utc_full,
+                    dt_utc,
                     local,
-                    effective_off,
+                    off,
                     tr.is_dst,
                     tr.abbreviation,
                     delta,
@@ -337,8 +342,7 @@ class TimeZoneInfo:
         posix_state = self._posix_footer_state(dt_utc)
         if posix_state is not None:
             off, delta, abbr, in_dst = posix_state
-            effective_off = off
-            local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
+            local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
 
             # Now that we're past the end of the TZif body, use the POSIX rules
             # to find the next transition.
@@ -348,9 +352,9 @@ class TimeZoneInfo:
                 dt_utc_key,
                 TimeZoneResolution(
                     self.timezone_name,
-                    dt_utc_full,
+                    dt_utc,
                     local,
-                    effective_off,
+                    off,
                     in_dst,
                     abbr,
                     delta,
@@ -361,15 +365,15 @@ class TimeZoneInfo:
         # Case 4: No footer; stick to the last known offset, no further transitions known
         off = last.utc_offset_secs
         delta = last.dst_difference_secs if last.is_dst else 0
-        effective_off = off
-        local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
+        local = (dt_utc + timedelta(seconds=off)).replace(tzinfo=None)
+        next_transition = None
         return self._cache_last_resolution(
             dt_utc_key,
             TimeZoneResolution(
                 self.timezone_name,
-                dt_utc_full,
+                dt_utc,
                 local,
-                effective_off,
+                off,
                 last.is_dst,
                 last.abbreviation,
                 delta,
