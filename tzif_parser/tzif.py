@@ -15,8 +15,6 @@ TimeZoneResolutionCache = namedtuple(
     "TimeZoneResolutionCache", ["cache_key", "resolution"]
 )
 
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
 
 class TimeZoneInfo:
     def __init__(
@@ -105,18 +103,20 @@ class TimeZoneInfo:
     def _posix_footer_state(
         self, dt_utc: datetime
     ) -> tuple[int, int, str | None, bool] | None:
-        f = self.footer
-        if f is None:
+        footer = self.footer
+        if footer is None:
             return None
 
-        std, dst_offset, dst_delta = self._posix_offsets(f)
+        std, dst_offset, dst_delta = self._posix_offsets(footer)
 
         # POSIX rules compare using naive local wall time in standard offset
         local_std = (dt_utc + timedelta(seconds=std)).replace(tzinfo=None)
         in_dst = False
-        if f.dst_start is not None and f.dst_end is not None:
-            start = f.dst_start.to_datetime(local_std.year)
-            end = f.dst_end.to_datetime(local_std.year) - timedelta(seconds=dst_delta)
+        if footer.dst_start is not None and footer.dst_end is not None:
+            start = footer.dst_start.to_datetime(local_std.year)
+            end = footer.dst_end.to_datetime(local_std.year) - timedelta(
+                seconds=dst_delta
+            )
             if start < end:
                 in_dst = start <= local_std < end
             else:
@@ -126,11 +126,11 @@ class TimeZoneInfo:
         if in_dst:
             off = dst_offset
             delta = dst_delta
-            abbr = f.dst_abbrev or f.standard_abbrev
+            abbr = footer.dst_abbrev or footer.standard_abbrev
         else:
             off = std
             delta = 0
-            abbr = f.standard_abbrev
+            abbr = footer.standard_abbrev
 
         return off, delta, abbr, in_dst
 
@@ -141,18 +141,18 @@ class TimeZoneInfo:
 
         Returns a timezone-aware UTC datetime, or None if no DST rules exist.
         """
-        f = self.footer
-        if f is None:
+        footer = self.footer
+        if footer is None:
             return None
-        if f.dst_start is None or f.dst_end is None:
+        if footer.dst_start is None or footer.dst_end is None:
             return None
 
-        std, dst_offset, dst_delta = self._posix_offsets(f)
+        std, dst_offset, dst_delta = self._posix_offsets(footer)
         dst_delta_td = timedelta(seconds=dst_delta)
 
         # Work in "standard-time local wall clock" coordinates, same as resolve()
-        std_delta = timedelta(seconds=std)
-        local_std = (dt_utc + std_delta).replace(tzinfo=None)
+        std_offset_td = timedelta(seconds=std)
+        local_std = (dt_utc + std_offset_td).replace(tzinfo=None)
         year = local_std.year
 
         candidates: list[tuple[datetime, datetime, int]] = []
@@ -160,8 +160,8 @@ class TimeZoneInfo:
         # Look for the next boundary in this year or next year
         for y in (year, year + 1):
             try:
-                start_y = f.dst_start.to_datetime(y)
-                end_y_dst = f.dst_end.to_datetime(y)
+                start_y = footer.dst_start.to_datetime(y)
+                end_y_dst = footer.dst_end.to_datetime(y)
             except ValueError:
                 # Out-of-range year for datetime, just skip
                 continue
