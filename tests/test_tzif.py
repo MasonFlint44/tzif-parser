@@ -144,6 +144,49 @@ def _southern_posix_timezone() -> TimeZoneInfo:
     )
 
 
+def _standard_only_posix_timezone() -> TimeZoneInfo:
+    header = TimeZoneInfoHeader(
+        version=1,
+        is_utc_flag_count=1,
+        wall_standard_flag_count=1,
+        leap_second_transitions_count=0,
+        transitions_count=0,
+        local_time_type_count=1,
+        timezone_abbrev_byte_count=len("STD\x00"),
+    )
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=[],
+        time_type_infos=[
+            TimeTypeInfo(
+                utc_offset_secs=-5 * 3600,
+                is_dst=False,
+                abbrev_index=0,
+            )
+        ],
+        time_type_indices=[],
+        timezone_abbrevs="STD\x00",
+        wall_standard_flags=[0],
+        is_utc_flags=[0],
+    )
+    posix_info = PosixTzInfo(
+        posix_string="STD5",
+        standard_abbrev="STD",
+        utc_offset_secs=-5 * 3600,
+        dst_abbrev=None,
+        dst_offset_secs=None,
+        dst_start=None,
+        dst_end=None,
+    )
+    return TimeZoneInfo(
+        "Test/PosixStandardOnly",
+        "/tmp/Test/PosixStandardOnly",
+        header,
+        body,
+        posix_tz_info=posix_info,
+    )
+
+
 def _leap_expiring_timezone() -> TimeZoneInfo:
     header = TimeZoneInfoHeader(
         version=1,
@@ -350,6 +393,49 @@ def test_read_invalid_timezone():
         TimeZoneInfo.read("Invalid/Timezone")
 
 
+def test_initial_tt_state_prefers_non_dst():
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=[],
+        time_type_infos=[
+            TimeTypeInfo(utc_offset_secs=3600, is_dst=True, abbrev_index=3),
+            TimeTypeInfo(utc_offset_secs=0, is_dst=False, abbrev_index=0),
+        ],
+        time_type_indices=[],
+        timezone_abbrevs="STD\x00DST\x00",
+        wall_standard_flags=[0, 0],
+        is_utc_flags=[0, 0],
+    )
+
+    offset, delta, abbr, in_dst = TimeZoneInfo._initial_tt_state(body)
+
+    assert offset == 0
+    assert delta == 0
+    assert abbr == "STD"
+    assert in_dst is False
+
+
+def test_initial_tt_state_handles_all_dst():
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=[],
+        time_type_infos=[
+            TimeTypeInfo(utc_offset_secs=3600, is_dst=True, abbrev_index=0)
+        ],
+        time_type_indices=[],
+        timezone_abbrevs="DST\x00",
+        wall_standard_flags=[0],
+        is_utc_flags=[0],
+    )
+
+    offset, delta, abbr, in_dst = TimeZoneInfo._initial_tt_state(body)
+
+    assert offset == 3600
+    assert delta == 0  # no standard entry to compare against
+    assert abbr == "DST"
+    assert in_dst is True
+
+
 def test_validate_timezone_key_rejects_normalized_shortening():
     with pytest.raises(ValueError):
         TimeZoneInfo._validate_timezone_key("America/New_York/..")
@@ -376,11 +462,82 @@ def test_pythontzpath_allows_relative_paths(monkeypatch, tmp_path):
     assert os.path.realpath(tz_info.filepath) == os.path.realpath(dest)
 
 
+def test_posix_footer_state_without_dst_rules():
+    tz_info = _standard_only_posix_timezone()
+    res = tz_info._posix_footer_state(datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    assert res is not None
+    offset, delta, abbr, in_dst = res
+    assert offset == -5 * 3600
+    assert delta == 0
+    assert abbr == "STD"
+    assert in_dst is False
+
+
+def test_resolve_without_transitions_and_footer():
+    header = TimeZoneInfoHeader(
+        version=1,
+        is_utc_flag_count=1,
+        wall_standard_flag_count=1,
+        leap_second_transitions_count=0,
+        transitions_count=0,
+        local_time_type_count=1,
+        timezone_abbrev_byte_count=len("FOO\x00"),
+    )
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=[],
+        time_type_infos=[TimeTypeInfo(utc_offset_secs=7200, is_dst=False, abbrev_index=0)],
+        time_type_indices=[],
+        timezone_abbrevs="FOO\x00",
+        wall_standard_flags=[0],
+        is_utc_flags=[0],
+    )
+
+    tz_info = TimeZoneInfo("Test/NoFooter", "/tmp/Test/NoFooter", header, body)
+    res = tz_info.resolve(datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    assert res.utc_offset_secs == 7200
+    assert res.abbreviation == "FOO"
+    assert res.is_dst is False
+    assert res.next_transition is None
+
+
+def test_load_tzdata_from_package_raises_file_not_found(monkeypatch):
+    def fake_files(package_name):
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr("tzif_parser.tzif.resources.files", fake_files)
+
+    with pytest.raises(FileNotFoundError):
+        TimeZoneInfo._load_tzdata_from_package("Missing/Zone")
+
+
+def test_next_posix_transition_none_when_no_dst_rules():
+    tz_info = _standard_only_posix_timezone()
+    dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+    assert tz_info._next_posix_transition_utc(dt) is None
+
+
 def test_compute_default_tzpath_prefers_env(monkeypatch):
     monkeypatch.setenv("PYTHONTZPATH", "/tmp/alpha" + os.pathsep + "/tmp/beta" + os.pathsep)
     monkeypatch.setattr("tzif_parser.tzif.sysconfig.get_config_var", lambda name: "/should/not/use")
 
     assert TimeZoneInfo._compute_default_tzpath() == ("/tmp/alpha", "/tmp/beta")
+
+
+def test_compute_default_tzpath_falls_back_to_sysconfig(monkeypatch):
+    monkeypatch.delenv("PYTHONTZPATH", raising=False)
+    monkeypatch.setattr(
+        "tzif_parser.tzif.sysconfig.get_config_var",
+        lambda name: "/usr/lib/zoneinfo" + os.pathsep + "/opt/tz",
+    )
+
+    assert TimeZoneInfo._compute_default_tzpath() == (
+        "/usr/lib/zoneinfo",
+        "/opt/tz",
+    )
 
 
 def test_from_path_accepts_absolute_path(tmp_path):
@@ -557,6 +714,53 @@ def test_next_transition_flags_abbreviation_change():
 
     assert res.abbreviation == "OLD"
     assert res.next_transition == datetime(1971, 1, 1, tzinfo=timezone.utc)
+
+
+def test_cache_key_strips_microseconds_and_preserves_fold():
+    dt = datetime(2025, 1, 1, 0, 0, 0, 123456, tzinfo=timezone.utc, fold=1)
+    key = TimeZoneInfo._cache_key(dt)
+
+    assert key.microsecond == 0
+    assert key.fold == 1
+    assert key.replace(microsecond=0) == dt.replace(microsecond=0)
+
+
+def test_as_utc_converts_naive_and_aware():
+    naive = datetime(2025, 1, 1, 0, 0, 0)
+    aware = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone(timedelta(hours=2)))
+
+    assert TimeZoneInfo._as_utc(naive).tzinfo is timezone.utc
+    assert TimeZoneInfo._as_utc(naive) == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert TimeZoneInfo._as_utc(aware) == datetime(2024, 12, 31, 22, 0, 0, tzinfo=timezone.utc)
+
+
+def test_resolve_range_cache_between_transitions():
+    tz_info = _abbr_change_timezone()
+    early = datetime(1970, 6, 1, 0, 0, 0, tzinfo=timezone.utc)
+    later = datetime(1970, 6, 2, 12, 0, 0, tzinfo=timezone.utc)
+
+    first = tz_info.resolve(early)
+    second = tz_info.resolve(later)
+
+    assert first.next_transition == datetime(1971, 1, 1, tzinfo=timezone.utc)
+    assert second.next_transition == first.next_transition  # reused via range cache
+    assert first.abbreviation == "OLD"
+    assert second.abbreviation == "OLD"
+    assert second.resolution_time == later
+    assert second.local_time == later.replace(tzinfo=None)
+
+
+def test_next_posix_transition_handles_start_and_end_boundaries():
+    tz_info = _posix_only_timezone()
+
+    before_dst = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    in_dst = datetime(2025, 7, 1, tzinfo=timezone.utc)
+
+    start_boundary = tz_info._next_posix_transition_utc(before_dst)
+    end_boundary = tz_info._next_posix_transition_utc(in_dst)
+
+    assert start_boundary == datetime(2025, 3, 9, 7, 0, tzinfo=timezone.utc)
+    assert end_boundary == datetime(2025, 11, 2, 6, 0, tzinfo=timezone.utc)
 
 
 def test_next_meaningful_body_transition_skips_duplicates():
