@@ -101,6 +101,49 @@ def _posix_only_timezone() -> TimeZoneInfo:
     )
 
 
+def _southern_posix_timezone() -> TimeZoneInfo:
+    header = TimeZoneInfoHeader(
+        version=1,
+        is_utc_flag_count=1,
+        wall_standard_flag_count=1,
+        leap_second_transitions_count=0,
+        transitions_count=0,
+        local_time_type_count=1,
+        timezone_abbrev_byte_count=len("STD\x00DST\x00"),
+    )
+    body = TimeZoneInfoBody(
+        transition_times=[],
+        leap_second_transitions=[],
+        time_type_infos=[
+            TimeTypeInfo(
+                utc_offset_secs=-3 * 3600,
+                is_dst=False,
+                abbrev_index=0,
+            )
+        ],
+        time_type_indices=[],
+        timezone_abbrevs="STD\x00DST\x00",
+        wall_standard_flags=[0],
+        is_utc_flags=[0],
+    )
+    posix_info = PosixTzInfo(
+        posix_string="STD3DST,M10.1.0/2,M4.1.0/2",
+        standard_abbrev="STD",
+        utc_offset_secs=-3 * 3600,
+        dst_abbrev="DST",
+        dst_offset_secs=None,  # exercise default dst offset calculation
+        dst_start=PosixTzDateTime(10, 1, 0, 2, 0, 0),
+        dst_end=PosixTzDateTime(4, 1, 0, 2, 0, 0),
+    )
+    return TimeZoneInfo(
+        "Test/SouthernPosix",
+        "/tmp/Test/SouthernPosix",
+        header,
+        body,
+        posix_tz_info=posix_info,
+    )
+
+
 def _leap_expiring_timezone() -> TimeZoneInfo:
     header = TimeZoneInfoHeader(
         version=1,
@@ -307,6 +350,11 @@ def test_read_invalid_timezone():
         TimeZoneInfo.read("Invalid/Timezone")
 
 
+def test_validate_timezone_key_rejects_normalized_shortening():
+    with pytest.raises(ValueError):
+        TimeZoneInfo._validate_timezone_key("America/New_York/..")
+
+
 def test_read_rejects_path_traversal():
     with pytest.raises(ValueError):
         TimeZoneInfo.read("../etc/passwd")
@@ -325,6 +373,24 @@ def test_pythontzpath_allows_relative_paths(monkeypatch, tmp_path):
     monkeypatch.setenv("PYTHONTZPATH", rel_root)
 
     tz_info = TimeZoneInfo.read("Etc/UTC")
+    assert os.path.realpath(tz_info.filepath) == os.path.realpath(dest)
+
+
+def test_compute_default_tzpath_prefers_env(monkeypatch):
+    monkeypatch.setenv("PYTHONTZPATH", "/tmp/alpha" + os.pathsep + "/tmp/beta" + os.pathsep)
+    monkeypatch.setattr("tzif_parser.tzif.sysconfig.get_config_var", lambda name: "/should/not/use")
+
+    assert TimeZoneInfo._compute_default_tzpath() == ("/tmp/alpha", "/tmp/beta")
+
+
+def test_from_path_accepts_absolute_path(tmp_path):
+    src = "/usr/share/zoneinfo/Etc/UTC"
+    dest = tmp_path / "copy_utc"
+    shutil.copy(src, dest)
+
+    tz_info = TimeZoneInfo.from_path(str(dest), timezone_name="Custom/UTC")
+
+    assert tz_info.timezone_name == "Custom/UTC"
     assert os.path.realpath(tz_info.filepath) == os.path.realpath(dest)
 
 
@@ -493,6 +559,31 @@ def test_next_transition_flags_abbreviation_change():
     assert res.next_transition == datetime(1971, 1, 1, tzinfo=timezone.utc)
 
 
+def test_next_meaningful_body_transition_skips_duplicates():
+    body = TimeZoneInfoBody(
+        transition_times=[
+            datetime(1970, 1, 1, tzinfo=timezone.utc),
+            datetime(1971, 1, 1, tzinfo=timezone.utc),
+            datetime(1972, 1, 1, tzinfo=timezone.utc),
+        ],
+        leap_second_transitions=[],
+        time_type_infos=[
+            TimeTypeInfo(utc_offset_secs=0, is_dst=False, abbrev_index=0),
+            TimeTypeInfo(utc_offset_secs=3600, is_dst=True, abbrev_index=4),
+        ],
+        time_type_indices=[0, 0, 1],
+        timezone_abbrevs="STD\x00DST\x00",
+        wall_standard_flags=[0, 0],
+        is_utc_flags=[0, 0],
+    )
+
+    next_transition = TimeZoneInfo._next_meaningful_body_transition(
+        body, 1, 0, 0, "STD"
+    )
+
+    assert next_transition == datetime(1972, 1, 1, tzinfo=timezone.utc)
+
+
 def test_resolve_uses_posix_footer_without_transitions():
     tz_info = _posix_only_timezone()
 
@@ -509,6 +600,24 @@ def test_resolve_uses_posix_footer_without_transitions():
     assert summer_res.is_dst is True
     assert summer_res.abbreviation == "DST"
     assert summer_res.dst_difference_secs == 3600
+
+
+def test_posix_footer_handles_year_wrap():
+    tz_info = _southern_posix_timezone()
+
+    # Southern-hemisphere style rules: DST spans the year boundary.
+    midsummer = datetime(2025, 1, 15, tzinfo=timezone.utc)
+    midwinter = datetime(2025, 6, 15, tzinfo=timezone.utc)
+
+    summer_res = tz_info.resolve(midsummer)
+    assert summer_res.is_dst is True
+    assert summer_res.utc_offset_secs == -2 * 3600  # default dst offset +3600s
+    assert summer_res.abbreviation == "DST"
+
+    winter_res = tz_info.resolve(midwinter)
+    assert winter_res.is_dst is False
+    assert winter_res.utc_offset_secs == -3 * 3600
+    assert winter_res.abbreviation == "STD"
 
 
 def test_resolve_preserves_microseconds_through_cache():
@@ -895,6 +1004,15 @@ def test_next_transition_after_last_transition_uses_posix_footer():
     assert res.next_transition == expected_next
     # Sanity: it’s in the future relative to the query instant
     assert res.next_transition > dt_utc.replace(tzinfo=timezone.utc)
+
+
+def test_next_posix_transition_handles_overflow_year():
+    tzinfo = _posix_only_timezone()
+    dt_utc = datetime(9999, 12, 31, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Local standard time is already past both DST boundaries; the next year's
+    # calculation overflows, but should be skipped cleanly.
+    assert tzinfo._next_posix_transition_utc(dt_utc) is None
 
 
 def test_timezone_abbrevs_include_midstring_indices():
