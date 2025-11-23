@@ -140,6 +140,39 @@ def _leap_expiring_timezone() -> TimeZoneInfo:
     )
 
 
+def _abbr_change_timezone() -> TimeZoneInfo:
+    header = TimeZoneInfoHeader(
+        version=1,
+        is_utc_flag_count=2,
+        wall_standard_flag_count=2,
+        leap_second_transitions_count=0,
+        transitions_count=2,
+        local_time_type_count=2,
+        timezone_abbrev_byte_count=len("OLD\x00NEW\x00"),
+    )
+    body = TimeZoneInfoBody(
+        transition_times=[
+            datetime(1970, 1, 1, tzinfo=timezone.utc),
+            datetime(1971, 1, 1, tzinfo=timezone.utc),
+        ],
+        leap_second_transitions=[],
+        time_type_infos=[
+            TimeTypeInfo(utc_offset_secs=0, is_dst=False, abbrev_index=0),
+            TimeTypeInfo(utc_offset_secs=0, is_dst=False, abbrev_index=4),
+        ],
+        time_type_indices=[0, 1],
+        timezone_abbrevs="OLD\x00NEW\x00",
+        wall_standard_flags=[0, 0],
+        is_utc_flags=[0, 0],
+    )
+    return TimeZoneInfo(
+        "Test/AbbrChange",
+        "/tmp/Test/AbbrChange",
+        header,
+        body,
+    )
+
+
 def test_read_transition_times_handles_negative(monkeypatch):
     from tzif_parser import tzif_body
 
@@ -396,34 +429,44 @@ def test_read_timezone_without_posix_footer():
     assert tz_info.footer is None
     # Still usable for resolving instants
     res = tz_info.resolve(datetime(2025, 1, 1, tzinfo=timezone.utc))
-    expected = (
-        tz_info.body.leap_second_transitions[-1].correction
-        if tz_info.body.leap_second_transitions
-        else 0
-    )
-    assert res.utc_offset_secs == expected
+    assert res.utc_offset_secs == 0
 
 
-def test_right_utc_leap_seconds_affect_offsets():
+def test_right_utc_leap_seconds_do_not_change_offsets():
     tz_info = TimeZoneInfo.read("right/UTC")
     before = tz_info.resolve(
         datetime(1972, 6, 30, 23, 59, 30, tzinfo=timezone.utc)
     )
     after = tz_info.resolve(datetime(1972, 7, 1, 0, 0, 30, tzinfo=timezone.utc))
 
-    first_correction = tz_info.body.leap_second_transitions[0].correction
+    # Leap seconds should not change the reported offset/local time, to match zoneinfo
     assert before.utc_offset_secs == 0
-    assert after.utc_offset_secs == first_correction
+    assert after.utc_offset_secs == 0
+    assert before.local_time == before.resolution_time.replace(tzinfo=None)
+    assert after.local_time == after.resolution_time.replace(tzinfo=None)
 
 
-def test_right_utc_next_transition_reports_leap():
+def test_right_utc_next_transition_ignores_leaps():
     tz_info = TimeZoneInfo.read("right/UTC")
     res = tz_info.resolve(datetime(1972, 6, 30, 23, 59, 30, tzinfo=timezone.utc))
-    first_leap = tz_info.body.leap_second_transitions[0].transition_time
-    expected = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(
-        seconds=first_leap
-    )
-    assert res.next_transition == expected
+    assert res.next_transition is None
+
+
+def test_right_utc_matches_zoneinfo_offsets():
+    tz_info = TimeZoneInfo.read("right/UTC")
+    z = ZoneInfo("right/UTC")
+
+    samples = [
+        datetime(1972, 6, 30, 23, 59, 30, tzinfo=timezone.utc),  # before first leap
+        datetime(1972, 7, 1, 0, 0, 30, tzinfo=timezone.utc),  # after first leap
+        datetime(2000, 1, 15, tzinfo=timezone.utc),  # mid-stream leap set
+    ]
+
+    for utc_dt in samples:
+        expected = utc_dt.astimezone(z).replace(tzinfo=None)
+        res = tz_info.resolve(utc_dt)
+        assert res.utc_offset_secs == 0
+        assert res.local_time == expected
 
 
 def test_resolve_drops_leap_correction_after_expiration():
@@ -434,8 +477,20 @@ def test_resolve_drops_leap_correction_after_expiration():
     before = expiration - timedelta(seconds=1)
     after = expiration
 
-    assert tz_info.resolve(before).utc_offset_secs == 1
+    # Offsets stay constant; expiration simply stops advertising leap-based transitions
+    assert tz_info.resolve(before).utc_offset_secs == 0
     assert tz_info.resolve(after).utc_offset_secs == 0
+    assert tz_info.resolve(after).next_transition is None
+
+
+def test_next_transition_flags_abbreviation_change():
+    tz_info = _abbr_change_timezone()
+    # Pick a time after the first transition but before the second
+    dt = datetime(1970, 6, 1, tzinfo=timezone.utc)
+    res = tz_info.resolve(dt)
+
+    assert res.abbreviation == "OLD"
+    assert res.next_transition == datetime(1971, 1, 1, tzinfo=timezone.utc)
 
 
 def test_resolve_uses_posix_footer_without_transitions():

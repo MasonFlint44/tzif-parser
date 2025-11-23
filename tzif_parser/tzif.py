@@ -72,55 +72,6 @@ class TimeZoneInfo:
         self._last_resolution = TimeZoneResolutionCache(cache_key, resolution)
         return resolution
 
-    def _leap_correction_seconds(self, dt_utc: datetime, body: TimeZoneInfoBody) -> int:
-        if (
-            body.leap_second_expiration is not None
-            and dt_utc >= body.leap_second_expiration
-        ):
-            return 0
-        idx = body.find_leap_second_index(dt_utc)
-        if idx is None:
-            return 0
-        leap = body.leap_second_transitions[idx]
-        if leap.is_expiration:
-            if idx == 0:
-                return 0
-            leap = body.leap_second_transitions[idx - 1]
-        return leap.correction
-
-    def _next_leap_transition_utc(
-        self, dt_utc: datetime, body: TimeZoneInfoBody
-    ) -> datetime | None:
-        idx = body.find_leap_second_index(dt_utc)
-        if idx is None:
-            next_idx = 0
-        else:
-            next_idx = idx + 1
-
-        if next_idx >= len(body.leap_second_transitions):
-            return None
-        while next_idx < len(body.leap_second_transitions):
-            candidate = body.leap_second_transitions[next_idx]
-            if not candidate.is_expiration:
-                return (_EPOCH + timedelta(seconds=candidate.transition_time)).replace(
-                    tzinfo=timezone.utc
-                )
-            next_idx += 1
-        return None
-
-    def _merge_leap_transition(
-        self,
-        next_transition: datetime | None,
-        dt_utc: datetime,
-        body: TimeZoneInfoBody,
-    ) -> datetime | None:
-        leap_next = self._next_leap_transition_utc(dt_utc, body)
-        if leap_next is None:
-            return next_transition
-        if next_transition is None or leap_next < next_transition:
-            return leap_next
-        return next_transition
-
     def _posix_footer_state(
         self, dt_utc: datetime
     ) -> tuple[int, int, str | None, bool] | None:
@@ -203,6 +154,29 @@ class TimeZoneInfo:
         next_utc = (local_wall - boundary_delta).replace(tzinfo=timezone.utc)
         return next_utc
 
+    @staticmethod
+    def _next_meaningful_body_transition(
+        body: TimeZoneInfoBody,
+        start_index: int,
+        current_offset: int,
+        current_dst_diff: int,
+        current_abbr: str | None,
+    ) -> datetime | None:
+        """
+        Find the next transition that changes the effective ttinfo as defined by
+        zoneinfo (_ttinfo equality is utcoff/dstoff/tzname).
+        Some TZif files carry duplicate ttinfos; those are skipped.
+        """
+        for i in range(start_index, len(body.transitions)):
+            tr = body.transitions[i]
+            if (
+                tr.utc_offset_secs != current_offset
+                or tr.dst_difference_secs != current_dst_diff
+                or tr.abbreviation != current_abbr
+            ):
+                return tr.transition_time_utc
+        return None
+
     def resolve(self, dt: datetime) -> TimeZoneResolution:
         """
         Resolve this timezone at a given instant.
@@ -256,7 +230,6 @@ class TimeZoneInfo:
 
         dt_utc = dt_utc_full
         body = self.body
-        leap_corr = self._leap_correction_seconds(dt_utc, body)
 
         # Case 0: No transitions at all => single ttinfo applies
         if not body.transitions:
@@ -275,13 +248,9 @@ class TimeZoneInfo:
                 abbr = body.get_abbrev_by_index(tt.abbrev_index)
                 in_dst = tt.is_dst
 
-            effective_off = off + leap_corr
+            effective_off = off
             local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
-            next_transition = self._merge_leap_transition(
-                self._next_posix_transition_utc(dt_utc),
-                dt_utc,
-                body,
-            )
+            next_transition = self._next_posix_transition_utc(dt_utc)
 
             return self._cache_last_resolution(
                 dt_utc_key,
@@ -309,11 +278,11 @@ class TimeZoneInfo:
             )
             off = tt.utc_offset_secs
             abbr = body.get_abbrev_by_index(tt.abbrev_index)
-            effective_off = off + leap_corr
+            effective_off = off
             local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
 
-            next_transition = self._merge_leap_transition(
-                first.transition_time_utc, dt_utc, body
+            next_transition = self._next_meaningful_body_transition(
+                body, 0, off, delta, abbr
             )
 
             return self._cache_last_resolution(
@@ -338,23 +307,17 @@ class TimeZoneInfo:
             tr = body.transitions[tr_index]
             off = tr.utc_offset_secs
             delta = tr.dst_difference_secs if tr.is_dst else 0
-            effective_off = off + leap_corr
+            effective_off = off
             local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
 
             # Next body transition, if there is one.
-            if tr_index + 1 < len(body.transitions):
-                next_transition = body.transitions[tr_index + 1].transition_time_utc
-            else:
-                # We are at the last transition instant in the TZif body.
-                # If a POSIX footer exists, use it to compute the next
-                # transition boundary; otherwise, we truly don't know of
-                # any future transitions.
-                if self._posix_tz_info is not None:
-                    next_transition = self._next_posix_transition_utc(dt_utc)
-                else:
-                    next_transition = None
+            next_transition = self._next_meaningful_body_transition(
+                body, tr_index + 1, off, delta, tr.abbreviation
+            )
 
-            next_transition = self._merge_leap_transition(next_transition, dt_utc, body)
+            if next_transition is None and self._posix_tz_info is not None:
+                # Fall back to POSIX rules after the body ends.
+                next_transition = self._next_posix_transition_utc(dt_utc)
 
             return self._cache_last_resolution(
                 dt_utc_key,
@@ -374,16 +337,12 @@ class TimeZoneInfo:
         posix_state = self._posix_footer_state(dt_utc)
         if posix_state is not None:
             off, delta, abbr, in_dst = posix_state
-            effective_off = off + leap_corr
+            effective_off = off
             local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
 
             # Now that we're past the end of the TZif body, use the POSIX rules
             # to find the next transition.
-            next_transition = self._merge_leap_transition(
-                self._next_posix_transition_utc(dt_utc),
-                dt_utc,
-                body,
-            )
+            next_transition = self._next_posix_transition_utc(dt_utc)
 
             return self._cache_last_resolution(
                 dt_utc_key,
@@ -402,10 +361,8 @@ class TimeZoneInfo:
         # Case 4: No footer; stick to the last known offset, no further transitions known
         off = last.utc_offset_secs
         delta = last.dst_difference_secs if last.is_dst else 0
-        effective_off = off + leap_corr
+        effective_off = off
         local = (dt_utc + timedelta(seconds=effective_off)).replace(tzinfo=None)
-        next_transition = self._merge_leap_transition(None, dt_utc, body)
-
         return self._cache_last_resolution(
             dt_utc_key,
             TimeZoneResolution(
